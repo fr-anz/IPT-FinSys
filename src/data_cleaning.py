@@ -16,8 +16,7 @@ def clean_dataset(df):
     cleaned_df = cleaned_df.dropna(subset=['date']) # Drop if date became NaT from coercion
     cleaned_df['month'] = cleaned_df['date'].dt.to_period('M')
 
-    # --- Handle Blanks BEFORE String Conversion ---
-    # This prevents blanks from turning into the string 'nan'
+    # Handle blanks before string conversion
     text_cols = ['category', 'payment_method', 'status', 'account_type', 'subcategory', 'necessity_type', 'merchant']
     for col in text_cols:
         cleaned_df[col] = cleaned_df[col].fillna('Unknown')
