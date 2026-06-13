@@ -11,4 +11,4 @@ payment_method,category,"Bank Transfer', 'BDO Online', 'Cash', 'Credit Card', 'D
 necessity_type,category,"Need', 'Want', 'Saving', 'Mixed'",Not null,The behavioral classification that tags each transaction based on its financial priority.
 status,category,"Paid', 'Pending', 'Refunded', 'Cancelled'",Not null,The current processing state of the transaction.
 budget_limit_php,float64 (Numeric),Real numbers (≥ 0.00),Not null,The maximum allocated spending threshold in Philippine Peso assigned for the corresponding spending category.
-notes,object (String),"Alphanumeric values, ‘NaN’",Nullable String,An optional free-text field for supplementary remarks about the transaction.
+notes,object (String),"Alphanumeric values, NULL",Nullable String,An optional free-text field for supplementary remarks about the transaction.
