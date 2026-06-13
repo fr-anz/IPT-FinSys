@@ -35,6 +35,50 @@ def get_basic_summary(df):
         else None,
     }
 
+    numeric_columns = analysis_df.select_dtypes(include="number").columns.tolist()
+    if len(numeric_columns) >= 2:
+        correlation_matrix = analysis_df[numeric_columns].corr().round(4)
+        summary["correlation_analysis"] = {
+            "numeric_columns": numeric_columns,
+            "matrix": correlation_matrix.where(
+                pd.notna(correlation_matrix), None
+            ).to_dict(),
+            "amount_correlations": correlation_matrix["amount_php"]
+            .drop(labels=["amount_php"], errors="ignore")
+            .dropna()
+            .sort_values(key=lambda values: values.abs(), ascending=False)
+            .to_dict()
+            if "amount_php" in correlation_matrix.columns
+            else {},
+        }
+    else:
+        summary["correlation_analysis"] = {
+            "numeric_columns": numeric_columns,
+            "matrix": {},
+            "amount_correlations": {},
+        }
+
+    excluded_frequency_columns = {"transaction_id", "notes"}
+    categorical_columns = [
+        column
+        for column in analysis_df.select_dtypes(
+            include=["object", "category"]
+        ).columns.tolist()
+        if column not in excluded_frequency_columns
+    ]
+    frequency_distributions = {}
+    for column in categorical_columns:
+        value_counts = analysis_df[column].fillna("Unknown").astype(str).value_counts()
+        percentages = (value_counts / len(analysis_df) * 100).round(2)
+        frequency_distributions[column] = {
+            value: {
+                "count": int(count),
+                "percentage": float(percentages.loc[value]),
+            }
+            for value, count in value_counts.items()
+        }
+    summary["frequency_distributions"] = frequency_distributions
+
     if "category" in analysis_df.columns:
         category_totals = (
             analysis_df.dropna(subset=["amount_php"])
