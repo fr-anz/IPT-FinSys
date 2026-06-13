@@ -1,0 +1,14 @@
+Data Name,Data Type,Allowable Values,Constraints,Description
+transaction_id,object (String),Alpha-numeric (FEM-XXXX),"Primary Key, Unique, Not null",The primary key uniquely identifies each transaction record.
+date,datetime64[ns],YYYY-MM-DD,Not null,The exact calendar date timestamp detailing when the transaction occurred.
+month,period[M],YYYY-MM,Not null,Financial accounting period tracking monthly data continuity across fiscal years.
+account_type,category,"Freelance', 'Student', 'Personal', 'Household'",Not null,"The classification of the account holder’s financial profile, indicating the primary source of income or the nature of expenses being tracked."
+category,category,"Food & Dining', 'Entertainment', 'Shopping', 'Utilities', 'Transportation', 'Healthcare', 'Education', 'Savings', 'Rent', 'Others'",Not null,The expense classification grouping transactions into fund allocation.
+subcategory,category,"Association Dues', 'Cafe', 'Checkup', 'Cinema', 'Clothing', 'Dental', 'Dorm/Apartment Rent', 'Electricity', 'Emergency Fund', 'Fast Food', 'Fuel', 'Gadgets/Accessories', 'Gaming', 'Gifts/Donations', 'Groceries', 'Insurance', 'Internet', 'Investment', 'Jeepney/Bus Fare', 'Medicine', 'Miscellaneous', 'Mobile Load', 'Online Course', 'Online Shopping', 'Parking/Toll', 'Personal Care', 'Printing', 'Repair/Maintenance', 'Restaurant', 'Ride Hailing', 'School Supplies', 'Streaming Subscription', 'Travel/Leisure', 'Tuition/Fees', 'Water'",Not null,The granular classification that breaks down each category into specific spending types.
+merchant,object (String),Alphanumeric values,Not null,"The name of the business, vendor, or the service provider, identifying where or to whom the payment was made."
+amount_php,float64 (Numeric),"Real numbers (≥ 0.00, Except valid negative values for refunds)",Not null,"The monetary value of the transaction in Philippine peso, including negative values for refunded transactions."
+payment_method,category,"Bank Transfer', 'BDO Online', 'Cash', 'Credit Card', 'Debit Card', 'GCash', 'Maya'",Not null,The channel is utilized to settle transactions or the financial expense.
+necessity_type,category,"Need', 'Want', 'Saving', 'Mixed'",Not null,The behavioral classification that tags each transaction based on its financial priority.
+status,category,"Paid', 'Pending', 'Refunded', 'Cancelled'",Not null,The current processing state of the transaction.
+budget_limit_php,float64 (Numeric),Real numbers (≥ 0.00),Not null,The maximum allocated spending threshold in Philippine Peso assigned for the corresponding spending category.
+notes,object (String),"Alphanumeric values, ‘NaN’",Nullable String,An optional free-text field for supplementary remarks about the transaction.
