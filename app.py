@@ -871,7 +871,7 @@ def show_analysis_tables(summary, df):
     exported_paths = st.session_state.get("exported_summary_paths")
     if exported_paths:
         st.success(
-            "Summary CSVs saved to `data/outputs/`: "
+            "Summary CSVs saved to `data/outputs/processed/analysis/`: "
             + ", ".join(f"`{path.name}`" for path in exported_paths.values())
         )
         download_cols = st.columns(len(exported_paths))

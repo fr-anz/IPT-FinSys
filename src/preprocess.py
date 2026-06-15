@@ -4,7 +4,7 @@ import pandas as pd
 from src.config import (
     CLEANED_DATA_PATH,
     MONTHLY_AGGREGATION_PATH,
-    OUTPUTS_DIR,
+    PREPROCESSING_OUTPUTS_DIR,
     PROCESSED_TRANSACTIONS_PATH,
 )
 
@@ -319,8 +319,8 @@ def save_preprocessed_outputs(
     processed_path=PROCESSED_TRANSACTIONS_PATH,
     monthly_path=MONTHLY_AGGREGATION_PATH,
 ):
-    """Write preprocessing outputs to data/outputs and return their paths."""
-    OUTPUTS_DIR.mkdir(parents=True, exist_ok=True)
+    """Write preprocessing outputs to data/outputs/preprocessing and return paths."""
+    PREPROCESSING_OUTPUTS_DIR.mkdir(parents=True, exist_ok=True)
     processed_df.to_csv(processed_path, index=False)
     monthly_aggregation.to_csv(monthly_path, index=False)
     return {

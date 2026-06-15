@@ -3,10 +3,10 @@ from pathlib import Path
 import pandas as pd
 
 from src.config import (
+    ANALYSIS_OUTPUTS_DIR,
     BUDGET_SUMMARY_PATH,
     CATEGORY_SUMMARY_PATH,
     MONTHLY_SUMMARY_PATH,
-    OUTPUTS_DIR,
     PAYMENT_SUMMARY_PATH,
 )
 
@@ -184,7 +184,7 @@ def _build_budget_summary(export_df):
 
 def export_summary_csvs(df):
     """Build and write summary CSV files from the filtered dataset."""
-    OUTPUTS_DIR.mkdir(parents=True, exist_ok=True)
+    ANALYSIS_OUTPUTS_DIR.mkdir(parents=True, exist_ok=True)
     export_df = _prepare_export_df(df)
 
     exports = {
