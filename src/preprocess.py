@@ -1,7 +1,12 @@
 import numpy as np
 import pandas as pd
 
-from src.config import CLEANED_DATA_PATH
+from src.config import (
+    CLEANED_DATA_PATH,
+    MONTHLY_AGGREGATION_PATH,
+    OUTPUTS_DIR,
+    PROCESSED_TRANSACTIONS_PATH,
+)
 
 
 ALLOWED_TRANSACTION_TYPES = {"Income", "Expense", "Savings", "Debt Payment"}
@@ -308,7 +313,33 @@ def load_and_preprocess_cleaned_dataset(path=CLEANED_DATA_PATH):
     return preprocess_dataset(cleaned_df)
 
 
+def save_preprocessed_outputs(
+    processed_df,
+    monthly_aggregation,
+    processed_path=PROCESSED_TRANSACTIONS_PATH,
+    monthly_path=MONTHLY_AGGREGATION_PATH,
+):
+    """Write preprocessing outputs to data/outputs and return their paths."""
+    OUTPUTS_DIR.mkdir(parents=True, exist_ok=True)
+    processed_df.to_csv(processed_path, index=False)
+    monthly_aggregation.to_csv(monthly_path, index=False)
+    return {
+        "transactions": processed_path,
+        "monthly_aggregation": monthly_path,
+    }
+
+
+def load_preprocess_and_save_cleaned_dataset(path=CLEANED_DATA_PATH):
+    """Load the cleaned dataset, preprocess it, and save both output CSVs."""
+    processed_df, monthly_aggregation = load_and_preprocess_cleaned_dataset(path)
+    output_paths = save_preprocessed_outputs(processed_df, monthly_aggregation)
+    return processed_df, monthly_aggregation, output_paths
+
+
 if __name__ == "__main__":
-    transactions, monthly_metrics = load_and_preprocess_cleaned_dataset()
+    transactions, monthly_metrics, paths = load_preprocess_and_save_cleaned_dataset()
     print(transactions.head())
     print(monthly_metrics.head())
+    print("Saved outputs:")
+    for name, path in paths.items():
+        print(f"{name}: {path}")
