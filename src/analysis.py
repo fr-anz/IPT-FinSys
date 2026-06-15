@@ -68,7 +68,13 @@ def get_basic_summary(df):
     ]
     frequency_distributions = {}
     for column in categorical_columns:
-        value_counts = analysis_df[column].fillna("Unknown").astype(str).value_counts()
+        value_counts = (
+            analysis_df[column]
+            .astype(object)
+            .fillna("Unknown")
+            .astype(str)
+            .value_counts()
+        )
         percentages = (value_counts / len(analysis_df) * 100).round(2)
         frequency_distributions[column] = {
             value: {
