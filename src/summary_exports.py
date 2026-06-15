@@ -44,42 +44,63 @@ def _build_category_summary(export_df):
         return pd.DataFrame(
             columns=[
                 "category",
-                "total_spent",
-                "average_spent",
+                "total_expenses",
+                "average_expense",
                 "transaction_count",
                 "pct_of_total",
             ]
         )
 
+    expense_df = export_df[export_df["amount_php"] > 0]
     grouped = (
-        export_df.groupby("category", observed=True)["amount_php"]
-        .agg(total_spent="sum", average_spent="mean", transaction_count="count")
+        expense_df.groupby("category", observed=True)["amount_php"]
+        .agg(total_expenses="sum", average_expense="mean", transaction_count="count")
         .reset_index()
     )
-    total = grouped["total_spent"].sum()
+    total = grouped["total_expenses"].sum()
     grouped["pct_of_total"] = (
-        (grouped["total_spent"] / total * 100).round(1) if total else 0.0
+        (grouped["total_expenses"] / total * 100).round(1) if total else 0.0
     )
-    grouped["total_spent"] = grouped["total_spent"].round(2)
-    grouped["average_spent"] = grouped["average_spent"].round(2)
-    return grouped.sort_values("total_spent", ascending=False)
+    grouped["total_expenses"] = grouped["total_expenses"].round(2)
+    grouped["average_expense"] = grouped["average_expense"].round(2)
+    return grouped.sort_values("total_expenses", ascending=False)
 
 
 def _build_monthly_summary(export_df):
     if export_df is None or "month" not in export_df.columns:
         return pd.DataFrame(
-            columns=["month", "total_spent", "average_spent", "transaction_count"]
+            columns=[
+                "month",
+                "total_expenses",
+                "refund_total",
+                "net_amount",
+                "average_transaction",
+                "transaction_count",
+            ]
         )
 
+    monthly_df = export_df.dropna(subset=["month"])
     monthly = (
-        export_df.dropna(subset=["month"])
-        .groupby("month")["amount_php"]
-        .agg(total_spent="sum", average_spent="mean", transaction_count="count")
+        monthly_df.groupby("month")["amount_php"]
+        .agg(net_amount="sum", average_transaction="mean", transaction_count="count")
         .reset_index()
         .sort_values("month")
     )
-    monthly["total_spent"] = monthly["total_spent"].round(2)
-    monthly["average_spent"] = monthly["average_spent"].round(2)
+    monthly_expenses = (
+        monthly_df[monthly_df["amount_php"] > 0].groupby("month")["amount_php"].sum()
+    )
+    monthly_refunds = (
+        monthly_df[monthly_df["amount_php"] < 0]
+        .groupby("month")["amount_php"]
+        .sum()
+        .abs()
+    )
+    monthly["total_expenses"] = monthly["month"].map(monthly_expenses).fillna(0)
+    monthly["refund_total"] = monthly["month"].map(monthly_refunds).fillna(0)
+    monthly["net_amount"] = monthly["net_amount"].round(2)
+    monthly["average_transaction"] = monthly["average_transaction"].round(2)
+    monthly["total_expenses"] = monthly["total_expenses"].round(2)
+    monthly["refund_total"] = monthly["refund_total"].round(2)
     return monthly
 
 
@@ -88,23 +109,24 @@ def _build_payment_summary(export_df):
         return pd.DataFrame(
             columns=[
                 "payment_method",
-                "total_spent",
+                "total_expenses",
                 "transaction_count",
                 "pct_of_total",
             ]
         )
 
+    expense_df = export_df[export_df["amount_php"] > 0]
     grouped = (
-        export_df.groupby("payment_method", observed=True)["amount_php"]
-        .agg(total_spent="sum", transaction_count="count")
+        expense_df.groupby("payment_method", observed=True)["amount_php"]
+        .agg(total_expenses="sum", transaction_count="count")
         .reset_index()
     )
-    total = grouped["total_spent"].sum()
+    total = grouped["total_expenses"].sum()
     grouped["pct_of_total"] = (
-        (grouped["total_spent"] / total * 100).round(1) if total else 0.0
+        (grouped["total_expenses"] / total * 100).round(1) if total else 0.0
     )
-    grouped["total_spent"] = grouped["total_spent"].round(2)
-    return grouped.sort_values("total_spent", ascending=False)
+    grouped["total_expenses"] = grouped["total_expenses"].round(2)
+    return grouped.sort_values("total_expenses", ascending=False)
 
 
 def _build_budget_summary(export_df):
@@ -119,12 +141,31 @@ def _build_budget_summary(export_df):
             ]
         )
 
-    budget = (
-        export_df.groupby("category", observed=True)
-        .agg(
-            total_spent=("amount_php", "sum"),
-            total_budget=("budget_limit_php", "sum"),
+    expense_totals = (
+        export_df[export_df["amount_php"] > 0]
+        .groupby("category", observed=True)["amount_php"]
+        .sum()
+    )
+    if "month" in export_df.columns:
+        budget_totals = (
+            export_df.groupby(["category", "month"], observed=True)["budget_limit_php"]
+            .max()
+            .groupby("category", observed=True)
+            .sum()
         )
+    else:
+        budget_totals = export_df.groupby("category", observed=True)[
+            "budget_limit_php"
+        ].max()
+
+    budget = (
+        pd.DataFrame(
+            {
+                "total_spent": expense_totals,
+                "total_budget": budget_totals,
+            }
+        )
+        .fillna(0)
         .reset_index()
     )
     budget["remaining_budget"] = (

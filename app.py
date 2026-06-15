@@ -1,5 +1,4 @@
 from html import escape
-import io
 import re
 
 import pandas as pd
@@ -9,10 +8,11 @@ from streamlit_option_menu import option_menu
 from src.analysis import get_basic_summary
 from src.config import BASE_DATASET_NAME
 from src.data_cleaning import clean_dataset
-from src.data_loader import dataset_exists, load_raw_dataset, save_cleaned_dataset
+from src.data_loader import load_raw_dataset, save_cleaned_dataset
 from src.insights import generate_insights
 from src.summary_exports import export_summary_csvs
 from src.visualizations import (
+    create_budget_vs_actual_chart,
     create_budget_gauge,
     create_mini_monthly_line,
     create_top_categories_bar,
@@ -22,7 +22,6 @@ from src.visualizations import (
 
 st.set_page_config(
     page_title="Financial Expense Monitoring Dashboard",
-    page_icon="\U0001f4b9",
     layout="wide",
     initial_sidebar_state="auto",
 )
@@ -34,41 +33,49 @@ def inject_styles():
         """
         <style>
         :root {
-            --page: #f5f6f7;
+            --page: #f7f8fb;
             --surface: #ffffff;
-            --surface-strong: #edf0ef;
-            --ink: #18201d;
-            --muted: #66706b;
-            --line: #d9dfdc;
+            --surface-strong: #f1f4f7;
+            --ink: #101633;
+            --muted: #838aa3;
+            --line: #e8ecf3;
             --accent: #2f7d6d;
             --accent-dark: #205a50;
             --warning: #9d5d28;
-            --shadow: 0 1px 2px rgba(24, 32, 29, 0.05), 0 6px 18px rgba(24, 32, 29, 0.05);
+            --risk: #c25362;
+            --blue: #3387d5;
+            --amber: #d9972b;
+            --shadow: 0 24px 60px -34px rgba(29, 42, 74, 0.32);
         }
 
         html, body, [class*="css"] {
-            font-family: "Aptos", "Segoe UI", system-ui, sans-serif;
+            font-family: "Outfit", "Aptos", "Segoe UI", system-ui, sans-serif;
             color: var(--ink);
         }
 
         .stApp {
-            background: #eef1f0;
+            background:
+                radial-gradient(circle at 80% 0%, rgba(47, 125, 109, 0.06), transparent 28rem),
+                var(--page);
         }
 
         .block-container {
-            max-width: 100%;
-            padding-top: 1.4rem;
-            padding-bottom: 3rem;
+            max-width: 1480px;
+            padding-top: 1.65rem;
+            padding-bottom: 3.5rem;
             padding-left: 2rem;
             padding-right: 2rem;
         }
 
         [data-testid="stSidebar"] {
             background: #ffffff;
-            border-right: 1px solid var(--line);
+            border-right: 0;
+            box-shadow: 24px 0 60px -48px rgba(29, 42, 74, 0.38);
         }
 
-        [data-testid="stSidebar"] > div:first-child { padding-top: 1.1rem; }
+        [data-testid="stSidebar"] > div:first-child {
+            padding: 1.45rem 1.25rem 2rem;
+        }
 
         /* Hide Streamlit dev chrome (Deploy + menu) but keep the toolbar so the
            sidebar-expand control still works on mobile */
@@ -84,64 +91,14 @@ def inject_styles():
         }
         header[data-testid="stHeader"] * { pointer-events: auto; }
 
-        .app-topbar {
-            position: sticky;
-            top: 0;
-            z-index: 1000;
-            display: flex;
-            align-items: center;
-            justify-content: space-between;
-            gap: 1rem;
-            margin: 0 0 1.2rem;
-            padding: 0.7rem 1rem;
-            background: rgba(255, 255, 255, 0.88);
-            backdrop-filter: blur(12px);
-            -webkit-backdrop-filter: blur(12px);
-            border: 1px solid var(--line);
-            border-radius: 10px;
-            box-shadow: var(--shadow);
+        .brand-text { display: flex; flex-direction: column; line-height: 1.08; }
+        .brand-name {
+            color: var(--ink);
+            font-size: 1.34rem;
+            font-weight: 820;
+            letter-spacing: -0.03em;
         }
-
-        .brand { display: flex; align-items: center; gap: 0.65rem; }
-
-        .brand-mark {
-            width: 2.2rem;
-            height: 2.2rem;
-            border-radius: 8px;
-            background: linear-gradient(145deg, #215f54 0%, #2f7d6d 100%);
-            color: #ffffff;
-            font-size: 1.15rem;
-            font-weight: 800;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            box-shadow: 0 8px 18px rgba(47, 125, 109, 0.35);
-        }
-
-        .brand-text { display: flex; flex-direction: column; line-height: 1.12; }
-        .brand-name { color: var(--ink); font-size: 1rem; font-weight: 790; }
-        .brand-sub { color: var(--muted); font-size: 0.72rem; font-weight: 640; }
-
-        .topbar-status {
-            display: inline-flex;
-            align-items: center;
-            gap: 0.5rem;
-            background: #e2f0ec;
-            border: 1px solid rgba(47, 125, 109, 0.24);
-            border-radius: 999px;
-            color: var(--accent-dark);
-            font-size: 0.8rem;
-            font-weight: 650;
-            padding: 0.4rem 0.85rem;
-        }
-
-        .status-dot {
-            width: 0.55rem;
-            height: 0.55rem;
-            border-radius: 50%;
-            background: var(--accent);
-            box-shadow: 0 0 0 3px rgba(47, 125, 109, 0.18);
-        }
+        .brand-sub { color: var(--muted); font-size: 0.74rem; font-weight: 640; margin-top: 0.25rem; }
 
         [data-testid="stSidebar"] h2,
         [data-testid="stSidebar"] h3 {
@@ -165,61 +122,6 @@ def inject_styles():
 
         div[data-testid="stMetricValue"] {
             font-variant-numeric: tabular-nums;
-        }
-
-        .hero-panel {
-            position: relative;
-            overflow: hidden;
-            border: 1px solid rgba(217, 223, 220, 0.95);
-            border-radius: 8px;
-            padding: 1.15rem 1.4rem;
-            margin-bottom: 0.5rem;
-            background:
-                linear-gradient(135deg, rgba(255, 255, 255, 0.97), rgba(237, 240, 239, 0.92)),
-                repeating-linear-gradient(90deg, rgba(47, 125, 109, 0.04) 0 1px, transparent 1px 18px);
-            box-shadow: var(--shadow);
-        }
-
-        .hero-kicker {
-            color: var(--accent-dark);
-            font-size: 0.72rem;
-            font-weight: 750;
-            letter-spacing: 0.04em;
-            margin-bottom: 0.35rem;
-            text-transform: uppercase;
-        }
-
-        .hero-title {
-            color: var(--ink);
-            font-size: 1.75rem;
-            font-weight: 770;
-            letter-spacing: 0;
-            line-height: 1.12;
-            margin: 0;
-            max-width: 30ch;
-            text-wrap: balance;
-        }
-
-        .hero-copy {
-            color: var(--muted);
-            font-size: 0.92rem;
-            line-height: 1.55;
-            margin: 0.5rem 0 0;
-            max-width: 72ch;
-        }
-
-        .dataset-chip {
-            display: inline-flex;
-            align-items: center;
-            gap: 0.45rem;
-            background: #e2f0ec;
-            border: 1px solid rgba(47, 125, 109, 0.24);
-            border-radius: 8px;
-            color: var(--accent-dark);
-            font-size: 0.82rem;
-            font-weight: 650;
-            margin-top: 1.15rem;
-            padding: 0.45rem 0.8rem;
         }
 
         .section-heading {
@@ -246,82 +148,6 @@ def inject_styles():
             font-size: 0.88rem;
             line-height: 1.45;
             max-width: 52ch;
-        }
-
-        .metric-card {
-            min-height: 6.4rem;
-            display: flex;
-            flex-direction: column;
-            justify-content: center;
-            gap: 0.55rem;
-            background: var(--surface);
-            border: 1px solid rgba(217, 223, 220, 0.95);
-            border-radius: 12px;
-            box-shadow: var(--shadow);
-            padding: 1.35rem 1.45rem;
-            transition: transform 220ms ease, border-color 220ms ease, box-shadow 220ms ease;
-        }
-
-        .metric-card:hover {
-            border-color: rgba(47, 125, 109, 0.34);
-            box-shadow: 0 12px 30px rgba(24, 32, 29, 0.10);
-            transform: translateY(-2px);
-        }
-
-        .metric-label {
-            color: var(--muted);
-            display: block;
-            font-size: 0.76rem;
-            font-weight: 700;
-            letter-spacing: 0.03em;
-            margin: 0;
-            text-transform: uppercase;
-        }
-
-        .metric-value {
-            color: var(--ink);
-            display: block;
-            font-size: 1.85rem;
-            font-variant-numeric: tabular-nums;
-            font-weight: 760;
-            letter-spacing: 0;
-            line-height: 1.05;
-            margin: 0;
-            overflow-wrap: anywhere;
-        }
-
-        .metric-note {
-            color: var(--muted);
-            display: block;
-            font-size: 0.82rem;
-            line-height: 1.35;
-            margin-top: 0.7rem;
-        }
-
-        .metric-card--accent {
-            background: linear-gradient(145deg, #215f54 0%, #2f7d6d 100%);
-            border-color: rgba(47, 125, 109, 0.5);
-        }
-
-        .metric-card--accent .metric-label,
-        .metric-card--accent .metric-note {
-            color: rgba(255, 255, 255, 0.74);
-        }
-
-        .metric-card--accent .metric-value {
-            color: #ffffff;
-        }
-
-        .metric-card--warning .metric-value {
-            color: var(--warning);
-        }
-
-        .chart-title {
-            color: var(--ink);
-            font-size: 0.98rem;
-            font-weight: 720;
-            letter-spacing: 0;
-            margin: 0.1rem 0 0.45rem;
         }
 
         .insight-item {
@@ -439,128 +265,206 @@ def inject_styles():
             align-items: center;
             justify-content: space-between;
             gap: 1rem;
-            margin-bottom: 1.1rem;
+            margin-bottom: 1.35rem;
         }
 
         .page-title-bar .pt-left { display: flex; flex-direction: column; gap: 0.2rem; }
-        .page-title-bar .pt-kicker {
-            color: var(--accent-dark);
-            font-size: 0.7rem;
-            font-weight: 760;
-            letter-spacing: 0.06em;
-            text-transform: uppercase;
-        }
         .page-title-bar .pt-title {
             color: var(--ink);
-            font-size: 1.5rem;
-            font-weight: 770;
+            font-size: clamp(1.85rem, 2.1vw, 2.45rem);
+            font-weight: 820;
+            letter-spacing: -0.045em;
             line-height: 1.1;
             margin: 0;
         }
-        .page-title-bar .pt-sub { color: var(--muted); font-size: 0.86rem; }
-
-        .pt-pill {
-            display: inline-flex;
-            align-items: center;
-            gap: 0.5rem;
-            background: #ffffff;
-            border: 1px solid var(--line);
-            border-radius: 999px;
-            color: var(--accent-dark);
-            font-size: 0.8rem;
-            font-weight: 650;
-            padding: 0.45rem 0.9rem;
-            box-shadow: var(--shadow);
-            white-space: nowrap;
+        .page-title-bar .pt-meta {
+            color: var(--muted);
+            font-size: 0.88rem;
+            font-weight: 590;
+            margin-top: 0.35rem;
         }
-
         /* ---- Sidebar brand ---- */
         .sb-brand { display: flex; align-items: center; gap: 0.65rem; padding: 0 0.25rem 0.5rem; }
-        .sb-brand .brand-mark { width: 2.4rem; height: 2.4rem; font-size: 1.25rem; }
-
-        /* ---- Bento cards with embedded content ---- */
-        .bento-card {
-            background: var(--surface);
-            border: 1px solid var(--line);
-            border-radius: 12px;
-            box-shadow: var(--shadow);
-            padding: 1.1rem 1.2rem;
-            height: 100%;
-        }
-        .bento-card .bento-head {
-            display: flex;
-            align-items: center;
-            justify-content: space-between;
-            margin-bottom: 0.35rem;
-        }
-        .bento-card .bento-title {
-            color: var(--ink);
-            font-size: 0.95rem;
-            font-weight: 720;
-        }
-        .bento-card .bento-tag {
-            color: var(--muted);
-            font-size: 0.72rem;
-            font-weight: 650;
-            background: var(--surface-strong);
-            border-radius: 999px;
-            padding: 0.18rem 0.6rem;
-        }
-        .bento-card .bento-sub { color: var(--muted); font-size: 0.8rem; margin: 0 0 0.4rem; }
 
         /* Bordered containers act as bento cards */
         div[data-testid="stVerticalBlockBorderWrapper"] {
             background: var(--surface);
-            border-radius: 12px;
+            border: 1px solid rgba(232, 236, 243, 0.82);
+            border-radius: 24px;
             box-shadow: var(--shadow);
         }
-        .bento-title { color: var(--ink); font-size: 0.95rem; font-weight: 720; }
-        .bento-sub { color: var(--muted); font-size: 0.8rem; margin: 0 0 0.3rem; }
+        .bento-title { color: var(--ink); font-size: 1.05rem; font-weight: 780; letter-spacing: -0.02em; }
+        .bento-sub { color: var(--muted); font-size: 0.82rem; margin: 0.2rem 0 0.45rem; }
+
+        .summary-panel {
+            background: var(--surface);
+            border: 1px solid rgba(232, 236, 243, 0.88);
+            border-radius: 26px;
+            box-shadow: var(--shadow);
+            min-height: 18rem;
+            padding: 1.55rem;
+        }
+        .summary-head {
+            align-items: start;
+            display: flex;
+            justify-content: space-between;
+            gap: 1rem;
+            margin-bottom: 1.35rem;
+        }
+        .summary-title { color: var(--ink); display: block; font-size: 1.12rem; font-weight: 800; letter-spacing: -0.025em; }
+        .summary-sub { color: var(--muted); display: block; font-size: 0.86rem; margin-top: 0.28rem; }
+        .summary-tag {
+            background: #f6f8fb;
+            border: 1px solid var(--line);
+            border-radius: 12px;
+            color: var(--muted);
+            font-size: 0.74rem;
+            font-weight: 720;
+            padding: 0.45rem 0.7rem;
+            text-transform: uppercase;
+        }
+        .kpi-grid {
+            display: grid;
+            gap: 1rem;
+            grid-template-columns: repeat(4, minmax(0, 1fr));
+        }
+        .kpi-tile {
+            border-radius: 18px;
+            min-height: 8.4rem;
+            padding: 1.05rem 1.05rem 0.95rem;
+        }
+        .kpi-tile--blue { background: #eaf4ff; }
+        .kpi-tile--rose { background: #ffe8ec; }
+        .kpi-tile--amber { background: #fff4dc; }
+        .kpi-tile--green { background: #ddf8e8; }
+        .kpi-label {
+            color: #6f7791;
+            display: block;
+            font-size: 0.78rem;
+            font-weight: 760;
+            line-height: 1.2;
+        }
+        .kpi-value {
+            color: var(--ink);
+            display: block;
+            font-size: clamp(1.35rem, 1.55vw, 1.95rem);
+            font-variant-numeric: tabular-nums;
+            font-weight: 830;
+            letter-spacing: -0.04em;
+            line-height: 1.05;
+            margin-top: 1.2rem;
+            overflow-wrap: anywhere;
+        }
+        .kpi-delta {
+            color: #4c8d7c;
+            display: block;
+            font-size: 0.76rem;
+            font-weight: 760;
+            margin-top: 0.7rem;
+        }
+
+        .refund-card, .insight-preview-card {
+            background: var(--surface);
+            border: 1px solid rgba(232, 236, 243, 0.88);
+            border-radius: 24px;
+            box-shadow: var(--shadow);
+            height: 100%;
+            padding: 1.3rem 1.35rem;
+        }
+        .refund-meter {
+            background: #edf2f6;
+            border-radius: 999px;
+            height: 0.7rem;
+            margin: 1rem 0 0.8rem;
+            overflow: hidden;
+        }
+        .refund-meter span {
+            background: linear-gradient(90deg, var(--amber), #eab75f);
+            border-radius: inherit;
+            display: block;
+            height: 100%;
+        }
+        .mini-stat {
+            align-items: baseline;
+            display: flex;
+            justify-content: space-between;
+            gap: 1rem;
+            padding: 0.55rem 0;
+        }
+        .mini-stat + .mini-stat { border-top: 1px solid var(--line); }
+        .mini-stat span:first-child { color: var(--muted); font-size: 0.8rem; font-weight: 700; }
+        .mini-stat span:last-child {
+            color: var(--ink);
+            font-size: 0.95rem;
+            font-variant-numeric: tabular-nums;
+            font-weight: 800;
+            text-align: right;
+        }
+        .preview-stack { display: flex; flex-direction: column; gap: 0.8rem; margin-top: 0.8rem; }
+        .preview-item {
+            background: #f7f9fb;
+            border: 1px solid var(--line);
+            border-radius: 16px;
+            padding: 0.88rem 0.95rem;
+        }
+        .preview-kind {
+            color: var(--accent-dark);
+            display: block;
+            font-size: 0.68rem;
+            font-weight: 800;
+            letter-spacing: 0.06em;
+            margin-bottom: 0.4rem;
+            text-transform: uppercase;
+        }
+        .preview-text {
+            color: var(--ink);
+            display: block;
+            font-size: 0.84rem;
+            line-height: 1.48;
+        }
 
         /* ---- Visual insight cards ---- */
         .insight-card {
-            display: flex;
-            gap: 0.85rem;
+            display: block;
             background: var(--surface);
             border: 1px solid var(--line);
             border-left: 4px solid var(--accent);
             border-radius: 12px;
             box-shadow: var(--shadow);
-            padding: 1rem 1.1rem;
+            padding: 1.15rem 1.25rem;
             height: 100%;
         }
+        .insight-card.tone-risk { border-left-color: #9d5d28; }
         .insight-card.tone-trend { border-left-color: #4e7fa1; }
-        .insight-card.tone-reco { border-left-color: #b2863f; }
+        .insight-card.tone-structure { border-left-color: #b2863f; }
+        .insight-card.tone-adjustment { border-left-color: #738b4f; }
         .insight-card.tone-conclusion { border-left-color: #7a6aa0; }
 
-        .insight-card .ic-icon {
-            flex: 0 0 2.4rem;
-            width: 2.4rem;
-            height: 2.4rem;
-            border-radius: 10px;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            font-size: 1.2rem;
-            background: #e2f0ec;
-        }
-        .insight-card.tone-trend .ic-icon { background: #e3edf3; }
-        .insight-card.tone-reco .ic-icon { background: #f4ecda; }
-        .insight-card.tone-conclusion .ic-icon { background: #ece8f3; }
-
-        .insight-card .ic-body { display: flex; flex-direction: column; gap: 0.15rem; }
+        .insight-card .ic-body { display: flex; flex-direction: column; gap: 0.45rem; }
         .insight-card .ic-kind {
-            font-size: 0.68rem;
+            align-self: flex-start;
+            background: var(--surface-strong);
+            border: 1px solid rgba(217, 223, 220, 0.95);
+            border-radius: 7px;
+            color: var(--muted);
+            font-size: 0.66rem;
             font-weight: 760;
             letter-spacing: 0.05em;
+            padding: 0.18rem 0.5rem;
             text-transform: uppercase;
-            color: var(--muted);
         }
-        .insight-card .ic-text { color: var(--ink); font-size: 0.9rem; line-height: 1.5; }
+        .insight-card .ic-text {
+            color: var(--ink);
+            font-size: 0.94rem;
+            line-height: 1.58;
+            text-wrap: pretty;
+        }
         .insight-card .ic-text b { color: var(--accent-dark); }
 
         @media (max-width: 980px) {
             .stat-grid { grid-template-columns: repeat(3, 1fr); }
+            .kpi-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+            .page-title-bar { align-items: flex-start; flex-direction: column; }
         }
 
         @media (max-width: 760px) {
@@ -569,31 +473,18 @@ def inject_styles():
                 padding-right: 1rem;
             }
 
-            .hero-panel {
-                padding: 1.05rem 1.1rem;
-            }
-
-            .hero-title {
-                font-size: 1.5rem;
-            }
-
-            .hero-copy {
-                font-size: 0.88rem;
-            }
-
             .metric-value {
                 font-size: 1.45rem;
+            }
+            .kpi-grid { grid-template-columns: 1fr; }
+            .summary-panel, .refund-card, .insight-preview-card {
+                border-radius: 20px;
+                padding: 1.05rem;
             }
 
             .section-heading {
                 align-items: start;
                 flex-direction: column;
-            }
-
-            .topbar-status {
-                font-size: 0;
-                padding: 0.45rem;
-                gap: 0;
             }
 
             .brand-sub {
@@ -611,6 +502,19 @@ def format_php(value):
     if value is None or pd.isna(value):
         return "N/A"
     return f"PHP {value:,.2f}"
+
+
+def format_compact_php(value):
+    """Format large peso values for compact dashboard tiles."""
+    if value is None or pd.isna(value):
+        return "N/A"
+    abs_value = abs(value)
+    sign = "-" if value < 0 else ""
+    if abs_value >= 1_000_000:
+        return f"{sign}PHP {abs_value / 1_000_000:.2f}M"
+    if abs_value >= 1_000:
+        return f"{sign}PHP {abs_value / 1_000:.1f}K"
+    return f"{sign}PHP {abs_value:,.0f}"
 
 
 def format_number(value):
@@ -633,13 +537,167 @@ def section_heading(title, description):
     )
 
 
-def metric_card(label, value, note, tone="neutral"):
-    """Render a custom metric card (label + value only)."""
+def show_financial_summary_panel(summary):
+    """Render the reference-style grouped financial KPI panel."""
+    budget_summary = summary.get("budget_summary", {})
+    budget_usage = budget_summary.get("budget_usage_percent", 0)
+    tiles = [
+        (
+            "Total expenses",
+            format_compact_php(summary.get("gross_expense_total")),
+            "Positive expense transactions",
+            "rose",
+        ),
+        (
+            "Refunds",
+            format_compact_php(summary.get("refund_total")),
+            f"{format_number(summary.get('refund_transactions', 0))} refunded records",
+            "amber",
+        ),
+        (
+            "Net amount",
+            format_compact_php(summary.get("net_amount")),
+            "Expenses after refund adjustment",
+            "blue",
+        ),
+        (
+            "Budget used",
+            f"{budget_usage:.1f}%",
+            "Monthly category budget",
+            "green" if budget_usage <= 100 else "rose",
+        ),
+    ]
+    tiles_html = "".join(
+        f"""
+        <div class="kpi-tile kpi-tile--{escape(tone)}">
+            <span class="kpi-label">{escape(label)}</span>
+            <span class="kpi-value">{escape(value)}</span>
+            <span class="kpi-delta">{escape(detail)}</span>
+        </div>
+        """
+        for label, value, detail, tone in tiles
+    )
     st.markdown(
         f"""
-        <div class="metric-card metric-card--{escape(tone)}">
-            <span class="metric-label">{escape(label)}</span>
-            <span class="metric-value">{escape(str(value))}</span>
+        <div class="summary-panel">
+            <div class="summary-head">
+                <div>
+                    <span class="summary-title">Financial summary</span>
+                    <span class="summary-sub">Filtered records converted into decision metrics</span>
+                </div>
+                <span class="summary-tag">{format_number(summary.get("total_transactions", 0))} transactions</span>
+            </div>
+            <div class="kpi-grid">{tiles_html}</div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+def show_refund_impact_card(summary):
+    """Render a compact card showing how refunds affect the net amount."""
+    total_expenses = summary.get("gross_expense_total", 0) or 0
+    refund_total = summary.get("refund_total", 0) or 0
+    net_amount = summary.get("net_amount", 0)
+    refund_share = (refund_total / total_expenses * 100) if total_expenses else 0
+    meter_width = min(refund_share, 100)
+    st.markdown(
+        f"""
+        <div class="refund-card">
+            <span class="bento-title">Refund impact</span>
+            <div class="bento-sub">Gross expenses compared with net cash impact</div>
+            <div class="refund-meter"><span style="width:{meter_width:.1f}%"></span></div>
+            <div class="mini-stat"><span>Refund share</span><span>{refund_share:.1f}%</span></div>
+            <div class="mini-stat"><span>Refund total</span><span>{escape(format_php(refund_total))}</span></div>
+            <div class="mini-stat"><span>Net amount</span><span>{escape(format_php(net_amount))}</span></div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+def show_top_categories_table(summary, limit=5):
+    """Render the ranked category table used on the Overview dashboard."""
+    category_totals = list(summary.get("category_totals", {}).items())[:limit]
+    total_expenses = summary.get("gross_expense_total", 0) or 0
+    budget_by_category = summary.get("budget_by_category", {})
+    rows = []
+    for index, (category, amount) in enumerate(category_totals, start=1):
+        share = (amount / total_expenses * 100) if total_expenses else 0
+        budget_usage = budget_by_category.get(category, {}).get("usage_percent", 0)
+        rows.append(
+            {
+                "#": f"{index:02d}",
+                "Category": str(category),
+                "Expenses": amount,
+                "Share": share,
+                "Budget used": budget_usage,
+            }
+        )
+    table_df = pd.DataFrame(rows)
+    max_budget_usage = max(100, float(table_df["Budget used"].max())) if not table_df.empty else 100
+    with st.container(border=True):
+        st.markdown(
+            """
+            <span class="bento-title">Top categories</span>
+            <div class="bento-sub">Ranked by positive expense total</div>
+            """,
+            unsafe_allow_html=True,
+        )
+        if table_df.empty:
+            st.info("Top categories are unavailable for the selected data.")
+        else:
+            st.dataframe(
+                table_df,
+                width="stretch",
+                hide_index=True,
+                column_config={
+                    "Expenses": st.column_config.NumberColumn(
+                        "Expenses", format="PHP %.2f"
+                    ),
+                    "Share": st.column_config.ProgressColumn(
+                        "Share",
+                        format="%.1f%%",
+                        min_value=0,
+                        max_value=100,
+                    ),
+                    "Budget used": st.column_config.ProgressColumn(
+                        "Budget used",
+                        format="%.1f%%",
+                        min_value=0,
+                        max_value=max_budget_usage,
+                    ),
+                },
+            )
+
+
+def parse_insight(item):
+    """Split a generated insight into label, tone, and body."""
+    prefix, sep, rest = item.partition(":")
+    if sep and prefix.strip() in INSIGHT_STYLE:
+        tone, kind = INSIGHT_STYLE[prefix.strip()]
+        return tone, kind, rest.strip()
+    return "", "Insight", item
+
+
+def show_insight_preview(df, limit=3):
+    """Render the first few analytical findings for the Overview page."""
+    items = [parse_insight(item) for item in generate_insights(df)[:limit]]
+    cards_html = "".join(
+        f"""
+        <div class="preview-item">
+            <span class="preview-kind">{escape(kind)}</span>
+            <span class="preview-text">{_highlight_numbers(text)}</span>
+        </div>
+        """
+        for _, kind, text in items
+    )
+    st.markdown(
+        f"""
+        <div class="insight-preview-card">
+            <span class="bento-title">Analytical priorities</span>
+            <div class="bento-sub">Highest-signal findings from the filtered data</div>
+            <div class="preview-stack">{cards_html}</div>
         </div>
         """,
         unsafe_allow_html=True,
@@ -662,12 +720,13 @@ def sidebar_brand():
 
 
 def page_title(page, total_rows=None, showing=None):
-    """Render the compact page title bar (title only)."""
+    """Render the dashboard header."""
     st.markdown(
         f"""
         <div class="page-title-bar">
             <div class="pt-left">
                 <h1 class="pt-title">{escape(page)}</h1>
+                <span class="pt-meta">Financial expense monitoring dashboard</span>
             </div>
         </div>
         """,
@@ -730,72 +789,16 @@ def filter_dataset(df):
     return filtered_df
 
 
-def show_metric_cards(summary):
-    """Display the main dashboard metrics."""
-    budget_summary = summary.get("budget_summary", {})
-    stats = summary.get("amount_statistics", {})
-    remaining_budget = budget_summary.get("remaining_budget")
-    remaining_tone = "warning" if remaining_budget is not None and remaining_budget < 0 else "neutral"
-
-    metric_rows = [
-        [
-            (
-                "Transactions",
-                format_number(summary.get("total_transactions", 0)),
-                "Filtered records included in the analysis",
-                "neutral",
-            ),
-            (
-                "Total spent",
-                format_php(summary.get("total_expense")),
-                "Net recorded transaction amount",
-                "accent",
-            ),
-            (
-                "Average expense",
-                format_php(summary.get("average_expense")),
-                "Mean transaction value",
-                "neutral",
-            ),
-            (
-                "Budget used",
-                f"{budget_summary.get('budget_usage_percent', 0):.1f}%",
-                "Total spent compared with budget limit",
-                "neutral",
-            ),
-        ],
-        [
-            ("Median", format_php(stats.get("median")), "Middle transaction value", "neutral"),
-            ("Minimum", format_php(stats.get("min")), "Lowest transaction amount", "neutral"),
-            ("Maximum", format_php(stats.get("max")), "Highest transaction amount", "neutral"),
-            (
-                "Remaining budget",
-                format_php(remaining_budget),
-                "Budget left after recorded spending",
-                remaining_tone,
-            ),
-        ],
-    ]
-
-    for index, row in enumerate(metric_rows):
-        if index > 0:
-            st.write("")
-        cols = st.columns(4, gap="large")
-        for col, (label, value, note, tone) in zip(cols, row):
-            with col:
-                metric_card(label, value, note, tone)
-
-
 def show_statistics(summary):
     """Render the full statistical summary required by the rubric."""
     stats = summary.get("amount_statistics", {})
     tiles = [
-        ("Mean", format_php(stats.get("mean"))),
-        ("Median", format_php(stats.get("median"))),
-        ("Mode", format_php(stats.get("mode"))),
+        ("Mean transaction", format_php(stats.get("mean"))),
+        ("Median transaction", format_php(stats.get("median"))),
+        ("Mode transaction", format_php(stats.get("mode"))),
         ("Std. deviation", format_php(stats.get("standard_deviation"))),
-        ("Minimum", format_php(stats.get("min"))),
-        ("Maximum", format_php(stats.get("max"))),
+        ("Largest refund", format_php(stats.get("largest_refund_abs"))),
+        ("Largest transaction", format_php(stats.get("largest_transaction"))),
     ]
     tiles_html = "".join(
         f'<div class="stat-tile"><span class="stat-label">{escape(label)}</span>'
@@ -852,23 +855,9 @@ def show_cleaning_report(raw_df, cleaned_df, filtered_df):
     st.markdown(report_html, unsafe_allow_html=True)
 
 
-def load_raw_data_from_sidebar():
-    """Load raw CSV from sidebar upload or project data/raw folder."""
-    uploaded = st.sidebar.file_uploader(
-        "Upload CSV",
-        type=["csv"],
-        help=f"Optional. Falls back to data/raw/{BASE_DATASET_NAME}.",
-    )
-    if uploaded is not None:
-        st.session_state["uploaded_raw"] = uploaded.getvalue()
-        return pd.read_csv(io.BytesIO(st.session_state["uploaded_raw"]))
-
-    if "uploaded_raw" in st.session_state:
-        del st.session_state["uploaded_raw"]
-
-    if dataset_exists():
-        return load_raw_dataset()
-    return None
+def load_project_dataset():
+    """Load the fixed project dataset from data/raw."""
+    return load_raw_dataset()
 
 
 def show_analysis_tables(summary, df):
@@ -897,6 +886,13 @@ def show_analysis_tables(summary, df):
                 )
 
     st.write("")
+    section_heading(
+        "Statistical summary",
+        "Mean, median, mode, spread, refund, and largest transaction details.",
+    )
+    show_statistics(summary)
+    st.write("")
+
     tabs = st.tabs(
         [
             "Category totals",
@@ -911,15 +907,15 @@ def show_analysis_tables(summary, df):
         category_totals = summary.get("category_totals", {})
         if category_totals:
             category_df = pd.DataFrame(
-                category_totals.items(), columns=["Category", "Total Amount"]
+                category_totals.items(), columns=["Category", "Total Expenses"]
             )
             st.dataframe(
                 category_df,
                 width='stretch',
                 hide_index=True,
                 column_config={
-                    "Total Amount": st.column_config.NumberColumn(
-                        "Total Amount", format="PHP %.2f"
+                    "Total Expenses": st.column_config.NumberColumn(
+                        "Total Expenses", format="PHP %.2f"
                     )
                 },
             )
@@ -931,14 +927,32 @@ def show_analysis_tables(summary, df):
         if monthly_trends:
             monthly_df = pd.DataFrame.from_dict(monthly_trends, orient="index")
             monthly_df.index.name = "Month"
+            monthly_df = monthly_df.reset_index()[
+                [
+                    "Month",
+                    "gross_expense_total",
+                    "refund_total",
+                    "net_amount",
+                    "average_transaction",
+                    "transaction_count",
+                ]
+            ]
             st.dataframe(
-                monthly_df.reset_index(),
+                monthly_df,
                 width='stretch',
                 hide_index=True,
                 column_config={
-                    "total": st.column_config.NumberColumn("Total", format="PHP %.2f"),
-                    "average": st.column_config.NumberColumn(
-                        "Average", format="PHP %.2f"
+                    "net_amount": st.column_config.NumberColumn(
+                        "Net Amount", format="PHP %.2f"
+                    ),
+                    "gross_expense_total": st.column_config.NumberColumn(
+                        "Total Expenses", format="PHP %.2f"
+                    ),
+                    "refund_total": st.column_config.NumberColumn(
+                        "Refunds", format="PHP %.2f"
+                    ),
+                    "average_transaction": st.column_config.NumberColumn(
+                        "Average Transaction", format="PHP %.2f"
                     ),
                     "transaction_count": st.column_config.NumberColumn(
                         "Transactions", format="%d"
@@ -953,19 +967,31 @@ def show_analysis_tables(summary, df):
         if budget_by_category:
             budget_df = pd.DataFrame.from_dict(budget_by_category, orient="index")
             budget_df.index.name = "Category"
+            budget_df = budget_df.reset_index()[
+                [
+                    "Category",
+                    "total_spent",
+                    "total_budget",
+                    "remaining_budget",
+                    "usage_percent",
+                ]
+            ]
             st.dataframe(
-                budget_df.reset_index(),
+                budget_df,
                 width='stretch',
                 hide_index=True,
                 column_config={
                     "total_spent": st.column_config.NumberColumn(
-                        "Total Spent", format="PHP %.2f"
+                        "Total Expenses", format="PHP %.2f"
                     ),
                     "total_budget": st.column_config.NumberColumn(
                         "Total Budget", format="PHP %.2f"
                     ),
                     "remaining_budget": st.column_config.NumberColumn(
                         "Remaining Budget", format="PHP %.2f"
+                    ),
+                    "usage_percent": st.column_config.NumberColumn(
+                        "Budget Used", format="%.1f%%"
                     ),
                 },
             )
@@ -1031,17 +1057,18 @@ def show_charts(df):
 
     chart_config = {"displayModeBar": False, "responsive": True}
     for index in range(0, len(chart_items), 2):
-        cols = st.columns(2)
+        cols = st.columns(2, gap="large")
         for col, (title, fig) in zip(cols, chart_items[index : index + 2]):
             with col:
-                st.markdown(
-                    f'<div class="chart-title">{escape(title)}</div>',
-                    unsafe_allow_html=True,
-                )
-                if hasattr(fig, "to_plotly_json"):
-                    st.plotly_chart(fig, width='stretch', config=chart_config)
-                else:
-                    st.pyplot(fig, width='stretch')
+                with st.container(border=True):
+                    st.markdown(
+                        f'<div class="bento-title">{escape(title)}</div>',
+                        unsafe_allow_html=True,
+                    )
+                    if hasattr(fig, "to_plotly_json"):
+                        st.plotly_chart(fig, width='stretch', config=chart_config)
+                    else:
+                        st.pyplot(fig, width='stretch')
 
 
 def bento_chart(title, sub, fig, config):
@@ -1059,47 +1086,65 @@ def bento_chart(title, sub, fig, config):
 
 
 def show_overview(summary, df):
-    """Render the Overview page as a bento grid."""
-    show_metric_cards(summary)
-    st.write("")
-
+    """Render the Overview page as a reference-style dashboard grid."""
     config = {"displayModeBar": False, "responsive": True}
     budget_summary = summary.get("budget_summary", {})
-    col_gauge, col_trend, col_top = st.columns([1, 1.35, 1.2], gap="large")
-    with col_gauge:
+
+    summary_col, trend_col = st.columns([1.55, 1], gap="large")
+    with summary_col:
+        show_financial_summary_panel(summary)
+    with trend_col:
         bento_chart(
-            "Budget usage",
-            "Spent vs total budget",
-            create_budget_gauge(budget_summary.get("budget_usage_percent")),
-            config,
-        )
-    with col_trend:
-        bento_chart(
-            "Monthly spending",
-            "Total recorded amount per month",
+            "Monthly expenses",
+            "Positive expenses per month",
             create_mini_monthly_line(df),
             config,
         )
-    with col_top:
+
+    st.write("")
+    category_col, refund_col, budget_col = st.columns([1.35, 0.9, 0.95], gap="large")
+    with category_col:
         bento_chart(
-            "Top categories",
-            "Highest spending categories",
-            create_top_categories_bar(df),
+            "Category expenses",
+            "Top categories by positive expense amount",
+            create_top_categories_bar(df, top_n=6),
+            config,
+        )
+    with refund_col:
+        show_refund_impact_card(summary)
+    with budget_col:
+        bento_chart(
+            "Budget usage",
+            "Expenses vs monthly category budget",
+            create_budget_gauge(budget_summary.get("budget_usage_percent")),
             config,
         )
 
-    section_heading(
-        "Statistical summary",
-        "Mean, median, mode, spread, and range of transaction amounts.",
-    )
-    show_statistics(summary)
+    st.write("")
+    budget_wide_col, insight_col = st.columns([1.45, 1], gap="large")
+    with budget_wide_col:
+        bento_chart(
+            "Budget vs expenses",
+            "Monthly category budget compared with actual expenses",
+            create_budget_vs_actual_chart(df),
+            config,
+        )
+    with insight_col:
+        show_insight_preview(df)
+
+    st.write("")
+    show_top_categories_table(summary)
 
 
 INSIGHT_STYLE = {
-    "Finding": ("", "\U0001f50d", "Finding"),
-    "Trend": ("tone-trend", "\U0001f4c8", "Trend"),
-    "Recommendation": ("tone-reco", "\U0001f4a1", "Recommendation"),
-    "Conclusion": ("tone-conclusion", "\U0001f3c1", "Conclusion"),
+    "Budget variance": ("tone-risk", "Budget variance"),
+    "Budget exposure": ("tone-risk", "Budget exposure"),
+    "Category concentration": ("tone-structure", "Category concentration"),
+    "Refund adjustment": ("tone-adjustment", "Refund adjustment"),
+    "Peak period": ("tone-trend", "Peak period"),
+    "Monthly volatility": ("tone-trend", "Monthly volatility"),
+    "Priority mix": ("tone-structure", "Priority mix"),
+    "Analytical conclusion": ("tone-conclusion", "Analytical conclusion"),
 }
 
 
@@ -1112,49 +1157,29 @@ def _highlight_numbers(text):
 
 
 def show_visual_insights(df):
-    """Render insights as visual cards plus supporting charts."""
-    summary = get_basic_summary(df)
-    config = {"displayModeBar": False, "responsive": True}
-
-    col_a, col_b = st.columns(2)
-    with col_a:
-        bento_chart(
-            "Budget usage",
-            "How much of the budget is consumed",
-            create_budget_gauge(summary.get("budget_summary", {}).get("budget_usage_percent")),
-            config,
-        )
-    with col_b:
-        bento_chart(
-            "Where the money goes",
-            "Top spending categories",
-            create_top_categories_bar(df),
-            config,
-        )
-
+    """Render action-first insights as visual cards."""
     section_heading(
-        "Findings, trends & recommendations",
-        "Interpreted automatically from the current filtered data.",
+        "Analytical findings",
+        "Evidence-based interpretation of budget variance, spending concentration, refunds, and monthly movement.",
     )
 
     cards = []
     for item in generate_insights(df):
         prefix, sep, rest = item.partition(":")
         if sep and prefix.strip() in INSIGHT_STYLE:
-            tone, icon, kind = INSIGHT_STYLE[prefix.strip()]
+            tone, kind = INSIGHT_STYLE[prefix.strip()]
             text = rest.strip()
         else:
-            tone, icon, kind = "", "\U0001f4cc", "Insight"
+            tone, kind = "", "Insight"
             text = item
-        cards.append((tone, icon, kind, text))
+        cards.append((tone, kind, text))
 
     for index in range(0, len(cards), 2):
-        cols = st.columns(2)
-        for col, (tone, icon, kind, text) in zip(cols, cards[index : index + 2]):
+        cols = st.columns(2, gap="large")
+        for col, (tone, kind, text) in zip(cols, cards[index : index + 2]):
             with col:
                 st.markdown(
                     f'<div class="insight-card {tone}">'
-                    f'<div class="ic-icon">{icon}</div>'
                     f'<div class="ic-body">'
                     f'<span class="ic-kind">{escape(kind)}</span>'
                     f'<span class="ic-text">{_highlight_numbers(text)}</span>'
@@ -1195,20 +1220,21 @@ NAV_PAGES = ["Overview", "Visualizations", "Analysis", "Data", "Insights"]
 NAV_ICONS = ["grid-1x2-fill", "bar-chart-fill", "table", "database-fill", "lightbulb-fill"]
 
 NAV_STYLES = {
-    "container": {"padding": "0.2rem 0", "background-color": "transparent"},
-    "icon": {"color": "#66706b", "font-size": "0.95rem"},
+    "container": {"padding": "0.35rem 0", "background-color": "transparent"},
+    "icon": {"color": "#8991aa", "font-size": "1.05rem"},
     "nav-link": {
-        "font-size": "0.92rem",
-        "font-weight": "650",
-        "color": "#3a443f",
-        "padding": "0.55rem 0.8rem",
-        "margin": "0.15rem 0",
-        "border-radius": "8px",
+        "font-size": "0.96rem",
+        "font-weight": "700",
+        "color": "#8088a2",
+        "padding": "0.78rem 0.95rem",
+        "margin": "0.32rem 0",
+        "border-radius": "15px",
     },
     "nav-link-selected": {
         "background-color": "#2f7d6d",
         "color": "#ffffff",
-        "font-weight": "700",
+        "font-weight": "800",
+        "box-shadow": "0 18px 34px -22px rgba(47, 125, 109, 0.72)",
     },
 }
 
@@ -1227,15 +1253,15 @@ with st.sidebar:
     )
     st.markdown("---")
 
-raw_df = load_raw_data_from_sidebar()
+raw_df = load_project_dataset()
 cleaned_df = clean_dataset(raw_df) if raw_df is not None else None
 
 if cleaned_df is None:
     page_title("Overview")
     st.error(
-        f"Upload a CSV in the sidebar or place `{BASE_DATASET_NAME}` inside `data/raw/`."
+        f"Place `{BASE_DATASET_NAME}` inside `data/raw/` to load the dashboard."
     )
-    st.info("Dashboard pages will appear after a valid dataset is loaded.")
+    st.info("Dashboard pages will appear after the project dataset is available.")
 else:
     filtered_df = filter_dataset(cleaned_df)
 
@@ -1257,4 +1283,3 @@ else:
             show_data_page(raw_df, cleaned_df, filtered_df)
         elif page == "Insights":
             show_visual_insights(filtered_df)
-
