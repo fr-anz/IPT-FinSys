@@ -845,7 +845,7 @@ def show_cleaning_report(raw_df, cleaned_df, filtered_df):
         ),
         (
             "Invalid records filtered",
-            "Rows with no transaction id, unparseable date, or missing amount removed",
+            "Rows with unparseable dates or missing amounts removed; suspicious amounts flagged for review",
         ),
     ]
     report_html = "".join(
