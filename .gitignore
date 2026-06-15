@@ -1,5 +1,6 @@
 __pycache__/
 *.pyc
+.matplotlib-cache/
 .streamlit/secrets.toml
 .env
 _err.log

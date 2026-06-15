@@ -5,18 +5,27 @@ import pandas as pd
 import streamlit as st
 from streamlit_option_menu import option_menu
 
-from src.analysis import get_basic_summary
+from src.analysis import (
+    get_basic_summary,
+    get_preprocessed_financial_analysis,
+    save_analysis_summaries,
+)
 from src.config import BASE_DATASET_NAME
 from src.data_cleaning import clean_dataset
 from src.data_loader import load_raw_dataset, save_cleaned_dataset
 from src.insights import generate_insights
 from src.summary_exports import export_summary_csvs
 from src.visualizations import (
+    create_analysis_visualization_charts,
     create_budget_vs_actual_chart,
     create_budget_gauge,
+    create_budget_variance_by_category_bar,
+    create_expenses_by_category_bar,
+    create_monthly_income_expenses_line,
     create_mini_monthly_line,
     create_top_categories_bar,
     create_visualization_charts,
+    load_analysis_outputs,
 )
 
 
@@ -537,36 +546,246 @@ def section_heading(title, description):
     )
 
 
+@st.cache_data
+def load_processed_analysis_outputs():
+    """Load saved processed analysis CSV outputs for dashboard display."""
+    return load_analysis_outputs()
+
+
+@st.cache_data
+def load_processed_financial_analysis():
+    """Load the full processed analysis dictionary when preprocessing exists."""
+    try:
+        return get_preprocessed_financial_analysis()
+    except (FileNotFoundError, KeyError, pd.errors.EmptyDataError):
+        return {}
+
+
+def _numeric_series(df, column):
+    """Return a numeric series for a column that may be absent."""
+    if df is None or df.empty or column not in df.columns:
+        return pd.Series(dtype="float64")
+    return pd.to_numeric(df[column], errors="coerce").dropna()
+
+
+def _sum_column(df, column):
+    """Return a numeric column total from a possibly empty dataframe."""
+    values = _numeric_series(df, column)
+    return float(values.sum()) if not values.empty else 0.0
+
+
+def _mean_column(df, column):
+    """Return a numeric column mean from a possibly empty dataframe."""
+    values = _numeric_series(df, column)
+    return float(values.mean()) if not values.empty else None
+
+
+def build_processed_display_summary(
+    analysis_outputs,
+    processed_analysis,
+    fallback_summary,
+):
+    """Adapt processed analysis outputs to the existing dashboard summary shape."""
+    monthly_df = analysis_outputs.get("monthly_summary", pd.DataFrame())
+    category_df = analysis_outputs.get("category_summary", pd.DataFrame())
+    budget_df = analysis_outputs.get("budget_variance_summary", pd.DataFrame())
+    health_df = analysis_outputs.get("financial_health_summary", pd.DataFrame())
+    expense_group_df = analysis_outputs.get("expense_group_summary", pd.DataFrame())
+    processed_available = any(not frame.empty for frame in analysis_outputs.values())
+    if not processed_available:
+        return fallback_summary
+
+    summary = dict(fallback_summary)
+    totals = processed_analysis.get("totals", {})
+    overview = processed_analysis.get("dataset_overview", {})
+    stats = processed_analysis.get("statistical_analysis", {})
+    health_summary = processed_analysis.get("financial_health_score_summary", {})
+    emergency = processed_analysis.get(
+        "emergency_fund_contribution_consistency", {}
+    )
+
+    total_income = totals.get("total_income", _sum_column(monthly_df, "total_income"))
+    total_expenses = totals.get(
+        "total_expenses", _sum_column(monthly_df, "total_expenses")
+    )
+    total_savings = totals.get(
+        "total_savings", _sum_column(monthly_df, "total_savings")
+    )
+    total_debt = totals.get(
+        "total_debt_payments", _sum_column(monthly_df, "total_debt_payments")
+    )
+
+    budget_total = _sum_column(budget_df, "total_budget")
+    budget_spent = _sum_column(budget_df, "total_spent")
+    budget_usage = (budget_spent / budget_total * 100) if budget_total else 0.0
+
+    latest_health_score = None
+    if not health_df.empty and "financial_health_score" in health_df.columns:
+        health_scores = pd.to_numeric(
+            health_df["financial_health_score"], errors="coerce"
+        ).dropna()
+        if not health_scores.empty:
+            latest_health_score = float(health_scores.iloc[-1])
+
+    category_totals = {}
+    if not category_df.empty and {"category", "total_spent"}.issubset(category_df):
+        category_totals = (
+            category_df.assign(
+                total_spent=pd.to_numeric(
+                    category_df["total_spent"], errors="coerce"
+                )
+            )
+            .dropna(subset=["total_spent"])
+            .sort_values("total_spent", ascending=False)
+            .set_index("category")["total_spent"]
+            .round(2)
+            .to_dict()
+        )
+
+    budget_by_category = {}
+    if not budget_df.empty and {"category", "total_spent", "total_budget"}.issubset(
+        budget_df
+    ):
+        budget_table = budget_df.copy()
+        budget_table["total_spent"] = pd.to_numeric(
+            budget_table["total_spent"], errors="coerce"
+        ).fillna(0)
+        budget_table["total_budget"] = pd.to_numeric(
+            budget_table["total_budget"], errors="coerce"
+        ).fillna(0)
+        budget_table["remaining_budget"] = (
+            budget_table["total_budget"] - budget_table["total_spent"]
+        )
+        budget_table["usage_percent"] = budget_table.apply(
+            lambda row: (row["total_spent"] / row["total_budget"] * 100)
+            if row["total_budget"]
+            else 0,
+            axis=1,
+        )
+        budget_by_category = (
+            budget_table.set_index("category")[
+                ["total_spent", "total_budget", "remaining_budget", "usage_percent"]
+            ]
+            .round(2)
+            .to_dict(orient="index")
+        )
+
+    monthly_trends = {}
+    if not monthly_df.empty and "year_month" in monthly_df.columns:
+        monthly_table = monthly_df.copy()
+        numeric_columns = [
+            column for column in monthly_table.columns if column != "year_month"
+        ]
+        for column in numeric_columns:
+            monthly_table[column] = pd.to_numeric(
+                monthly_table[column], errors="coerce"
+            )
+        monthly_table["gross_expense_total"] = monthly_table.get("total_expenses")
+        monthly_table["net_amount"] = monthly_table.get("total_expenses")
+        monthly_table["refund_total"] = 0.0
+        monthly_table["average_transaction"] = None
+        monthly_table["transaction_count"] = None
+        monthly_trends = (
+            monthly_table.set_index("year_month").round(2).to_dict(orient="index")
+        )
+
+    summary.update(
+        {
+            "is_processed_summary": True,
+            "processed_outputs_available": processed_available,
+            "dataset_overview": overview,
+            "processed_statistics": stats,
+            "financial_health_summary": health_summary,
+            "emergency_fund_summary": emergency,
+            "total_transactions": overview.get(
+                "processed_transaction_rows",
+                fallback_summary.get("total_transactions", 0),
+            ),
+            "gross_expense_total": total_expenses,
+            "net_amount": total_expenses,
+            "refund_total": 0.0,
+            "refund_transactions": 0,
+            "total_income": total_income,
+            "total_savings": total_savings,
+            "total_debt_payments": total_debt,
+            "latest_financial_health_score": latest_health_score,
+            "average_savings_rate": _mean_column(monthly_df, "savings_rate"),
+            "average_debt_ratio": _mean_column(monthly_df, "debt_ratio"),
+            "category_totals": category_totals,
+            "monthly_trends": monthly_trends,
+            "budget_summary": {
+                "total_budget": budget_total,
+                "total_spent": budget_spent,
+                "total_expenses": budget_spent,
+                "remaining_budget": budget_total - budget_spent,
+                "budget_usage_percent": budget_usage,
+            },
+            "budget_by_category": budget_by_category,
+            "expense_group_summary": expense_group_df,
+        }
+    )
+    return summary
+
+
 def show_financial_summary_panel(summary):
     """Render the reference-style grouped financial KPI panel."""
     budget_summary = summary.get("budget_summary", {})
     budget_usage = budget_summary.get("budget_usage_percent", 0)
-    tiles = [
-        (
-            "Total expenses",
-            format_compact_php(summary.get("gross_expense_total")),
-            "Positive expense transactions",
-            "rose",
-        ),
-        (
-            "Refunds",
-            format_compact_php(summary.get("refund_total")),
-            f"{format_number(summary.get('refund_transactions', 0))} refunded records",
-            "amber",
-        ),
-        (
-            "Net amount",
-            format_compact_php(summary.get("net_amount")),
-            "Expenses after refund adjustment",
-            "blue",
-        ),
-        (
-            "Budget used",
-            f"{budget_usage:.1f}%",
-            "Monthly category budget",
-            "green" if budget_usage <= 100 else "rose",
-        ),
-    ]
+    if summary.get("is_processed_summary"):
+        health_score = summary.get("latest_financial_health_score")
+        tiles = [
+            (
+                "Total income",
+                format_compact_php(summary.get("total_income")),
+                "Processed monthly income",
+                "green",
+            ),
+            (
+                "Total expenses",
+                format_compact_php(summary.get("gross_expense_total")),
+                "Processed expense total",
+                "rose",
+            ),
+            (
+                "Total savings",
+                format_compact_php(summary.get("total_savings")),
+                "Savings transactions",
+                "blue",
+            ),
+            (
+                "Health score",
+                f"{health_score:.1f}" if health_score is not None else "N/A",
+                "Latest monthly score",
+                "green" if (health_score or 0) >= 70 else "amber",
+            ),
+        ]
+    else:
+        tiles = [
+            (
+                "Total expenses",
+                format_compact_php(summary.get("gross_expense_total")),
+                "Positive expense transactions",
+                "rose",
+            ),
+            (
+                "Refunds",
+                format_compact_php(summary.get("refund_total")),
+                f"{format_number(summary.get('refund_transactions', 0))} refunded records",
+                "amber",
+            ),
+            (
+                "Net amount",
+                format_compact_php(summary.get("net_amount")),
+                "Expenses after refund adjustment",
+                "blue",
+            ),
+            (
+                "Budget used",
+                f"{budget_usage:.1f}%",
+                "Monthly category budget",
+                "green" if budget_usage <= 100 else "rose",
+            ),
+        ]
     tiles_html = "".join(
         f"""
         <div class="kpi-tile kpi-tile--{escape(tone)}">
@@ -577,13 +796,18 @@ def show_financial_summary_panel(summary):
         """
         for label, value, detail, tone in tiles
     )
+    summary_sub = (
+        "Processed outputs converted into decision metrics"
+        if summary.get("is_processed_summary")
+        else "Filtered records converted into decision metrics"
+    )
     st.markdown(
         f"""
         <div class="summary-panel">
             <div class="summary-head">
                 <div>
                     <span class="summary-title">Financial summary</span>
-                    <span class="summary-sub">Filtered records converted into decision metrics</span>
+                    <span class="summary-sub">{escape(summary_sub)}</span>
                 </div>
                 <span class="summary-tag">{format_number(summary.get("total_transactions", 0))} transactions</span>
             </div>
@@ -596,6 +820,28 @@ def show_financial_summary_panel(summary):
 
 def show_refund_impact_card(summary):
     """Render a compact card showing how refunds affect the net amount."""
+    if summary.get("is_processed_summary"):
+        total_income = summary.get("total_income", 0) or 0
+        total_savings = summary.get("total_savings", 0) or 0
+        total_debt = summary.get("total_debt_payments", 0) or 0
+        savings_rate = (total_savings / total_income * 100) if total_income else 0
+        debt_ratio = (total_debt / total_income * 100) if total_income else 0
+        meter_width = min(savings_rate, 100)
+        st.markdown(
+            f"""
+            <div class="refund-card">
+                <span class="bento-title">Savings and debt</span>
+                <div class="bento-sub">Processed savings and debt payment ratios</div>
+                <div class="refund-meter"><span style="width:{meter_width:.1f}%"></span></div>
+                <div class="mini-stat"><span>Savings rate</span><span>{savings_rate:.1f}%</span></div>
+                <div class="mini-stat"><span>Debt ratio</span><span>{debt_ratio:.1f}%</span></div>
+                <div class="mini-stat"><span>Debt payments</span><span>{escape(format_php(total_debt))}</span></div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+        return
+
     total_expenses = summary.get("gross_expense_total", 0) or 0
     refund_total = summary.get("refund_total", 0) or 0
     net_amount = summary.get("net_amount", 0)
@@ -680,9 +926,50 @@ def parse_insight(item):
     return "", "Insight", item
 
 
-def show_insight_preview(df, limit=3):
+def show_insight_preview(df, summary=None, limit=3):
     """Render the first few analytical findings for the Overview page."""
-    items = [parse_insight(item) for item in generate_insights(df)[:limit]]
+    if summary and summary.get("is_processed_summary"):
+        budget_rows = summary.get("budget_by_category", {})
+        highest_overspend = None
+        if budget_rows:
+            highest_overspend = max(
+                budget_rows.items(),
+                key=lambda item: item[1].get("total_spent", 0)
+                - item[1].get("total_budget", 0),
+            )
+        health_score = summary.get("latest_financial_health_score")
+        savings_rate = summary.get("average_savings_rate")
+        debt_ratio = summary.get("average_debt_ratio")
+        processed_items = []
+        if highest_overspend:
+            category, values = highest_overspend
+            variance = values.get("total_spent", 0) - values.get("total_budget", 0)
+            processed_items.append(
+                (
+                    "tone-risk" if variance > 0 else "tone-structure",
+                    "Budget variance",
+                    f"{category} variance is {format_php(variance)}.",
+                )
+            )
+        if health_score is not None:
+            processed_items.append(
+                (
+                    "tone-trend",
+                    "Financial health",
+                    f"Latest financial health score is {health_score:.2f} out of 100.",
+                )
+            )
+        if savings_rate is not None and debt_ratio is not None:
+            processed_items.append(
+                (
+                    "tone-conclusion",
+                    "Savings and debt",
+                    f"Average savings rate is {savings_rate:.2f}% while average debt ratio is {debt_ratio:.2f}%.",
+                )
+            )
+        items = processed_items[:limit]
+    else:
+        items = [parse_insight(item) for item in generate_insights(df)[:limit]]
     cards_html = "".join(
         f"""
         <div class="preview-item">
@@ -791,15 +1078,52 @@ def filter_dataset(df):
 
 def show_statistics(summary):
     """Render the full statistical summary required by the rubric."""
-    stats = summary.get("amount_statistics", {})
-    tiles = [
-        ("Mean transaction", format_php(stats.get("mean"))),
-        ("Median transaction", format_php(stats.get("median"))),
-        ("Mode transaction", format_php(stats.get("mode"))),
-        ("Std. deviation", format_php(stats.get("standard_deviation"))),
-        ("Largest refund", format_php(stats.get("largest_refund_abs"))),
-        ("Largest transaction", format_php(stats.get("largest_transaction"))),
-    ]
+    if summary.get("is_processed_summary"):
+        stats = summary.get("processed_statistics", {})
+        health = summary.get("financial_health_summary", {})
+        emergency = summary.get("emergency_fund_summary", {})
+        tiles = [
+            (
+                "Average monthly expense",
+                format_php(stats.get("average_monthly_expense")),
+            ),
+            (
+                "Median transaction",
+                format_php(stats.get("median_transaction_amount")),
+            ),
+            (
+                "Std. monthly expenses",
+                format_php(stats.get("standard_deviation_of_monthly_expenses")),
+            ),
+            (
+                "Average savings rate",
+                f"{summary.get('average_savings_rate'):.2f}%"
+                if summary.get("average_savings_rate") is not None
+                else "N/A",
+            ),
+            (
+                "Average health score",
+                f"{health.get('average_financial_health_score'):.2f}"
+                if health.get("average_financial_health_score") is not None
+                else "N/A",
+            ),
+            (
+                "Emergency consistency",
+                f"{emergency.get('consistency_rate_percent'):.2f}%"
+                if emergency.get("consistency_rate_percent") is not None
+                else "N/A",
+            ),
+        ]
+    else:
+        stats = summary.get("amount_statistics", {})
+        tiles = [
+            ("Mean transaction", format_php(stats.get("mean"))),
+            ("Median transaction", format_php(stats.get("median"))),
+            ("Mode transaction", format_php(stats.get("mode"))),
+            ("Std. deviation", format_php(stats.get("standard_deviation"))),
+            ("Largest refund", format_php(stats.get("largest_refund_abs"))),
+            ("Largest transaction", format_php(stats.get("largest_transaction"))),
+        ]
     tiles_html = "".join(
         f'<div class="stat-tile"><span class="stat-label">{escape(label)}</span>'
         f'<span class="stat-value">{escape(value)}</span></div>'
@@ -860,12 +1184,18 @@ def load_project_dataset():
     return load_raw_dataset()
 
 
-def show_analysis_tables(summary, df):
+def show_analysis_tables(summary, df, analysis_outputs=None):
     """Display grouped analysis tables in tabs."""
+    analysis_outputs = analysis_outputs or {}
     export_col, _ = st.columns([1, 3])
     with export_col:
         if st.button("Export summary CSVs", width="stretch"):
-            exported_paths = export_summary_csvs(df)
+            if summary.get("is_processed_summary"):
+                exported_paths = save_analysis_summaries()
+                load_processed_analysis_outputs.clear()
+                load_processed_financial_analysis.clear()
+            else:
+                exported_paths = export_summary_csvs(df)
             st.session_state["exported_summary_paths"] = exported_paths
 
     exported_paths = st.session_state.get("exported_summary_paths")
@@ -888,7 +1218,7 @@ def show_analysis_tables(summary, df):
     st.write("")
     section_heading(
         "Statistical summary",
-        "Mean, median, mode, spread, refund, and largest transaction details.",
+        "Processed monthly, transaction, emergency fund, and health score metrics.",
     )
     show_statistics(summary)
     st.write("")
@@ -898,84 +1228,94 @@ def show_analysis_tables(summary, df):
             "Category totals",
             "Monthly trends",
             "Budget summary",
-            "Correlations",
-            "Frequencies",
+            "Financial health",
+            "Expense groups",
         ]
     )
 
     with tabs[0]:
-        category_totals = summary.get("category_totals", {})
-        if category_totals:
-            category_df = pd.DataFrame(
-                category_totals.items(), columns=["Category", "Total Expenses"]
-            )
+        category_df = analysis_outputs.get("category_summary", pd.DataFrame())
+        if not category_df.empty:
             st.dataframe(
                 category_df,
                 width='stretch',
                 hide_index=True,
                 column_config={
-                    "Total Expenses": st.column_config.NumberColumn(
+                    "total_spent": st.column_config.NumberColumn(
                         "Total Expenses", format="PHP %.2f"
-                    )
+                    ),
+                    "average_transaction": st.column_config.NumberColumn(
+                        "Average Transaction", format="PHP %.2f"
+                    ),
+                    "pct_of_expenses": st.column_config.NumberColumn(
+                        "Share", format="%.2f%%"
+                    ),
                 },
             )
         else:
-            st.info("Category totals are unavailable for the selected data.")
+            category_totals = summary.get("category_totals", {})
+            if category_totals:
+                fallback_category_df = pd.DataFrame(
+                    category_totals.items(), columns=["Category", "Total Expenses"]
+                )
+                st.dataframe(
+                    fallback_category_df,
+                    width='stretch',
+                    hide_index=True,
+                    column_config={
+                        "Total Expenses": st.column_config.NumberColumn(
+                            "Total Expenses", format="PHP %.2f"
+                        )
+                    },
+                )
+            else:
+                st.info("Category totals are unavailable for the selected data.")
 
     with tabs[1]:
-        monthly_trends = summary.get("monthly_trends", {})
-        if monthly_trends:
-            monthly_df = pd.DataFrame.from_dict(monthly_trends, orient="index")
-            monthly_df.index.name = "Month"
-            monthly_df = monthly_df.reset_index()[
-                [
-                    "Month",
-                    "gross_expense_total",
-                    "refund_total",
-                    "net_amount",
-                    "average_transaction",
-                    "transaction_count",
-                ]
-            ]
+        monthly_df = analysis_outputs.get("monthly_summary", pd.DataFrame())
+        if not monthly_df.empty:
             st.dataframe(
                 monthly_df,
                 width='stretch',
                 hide_index=True,
                 column_config={
-                    "net_amount": st.column_config.NumberColumn(
-                        "Net Amount", format="PHP %.2f"
+                    "total_income": st.column_config.NumberColumn(
+                        "Total Income", format="PHP %.2f"
                     ),
-                    "gross_expense_total": st.column_config.NumberColumn(
+                    "total_expenses": st.column_config.NumberColumn(
                         "Total Expenses", format="PHP %.2f"
                     ),
-                    "refund_total": st.column_config.NumberColumn(
-                        "Refunds", format="PHP %.2f"
+                    "total_savings": st.column_config.NumberColumn(
+                        "Total Savings", format="PHP %.2f"
                     ),
-                    "average_transaction": st.column_config.NumberColumn(
-                        "Average Transaction", format="PHP %.2f"
+                    "total_debt_payments": st.column_config.NumberColumn(
+                        "Debt Payments", format="PHP %.2f"
                     ),
-                    "transaction_count": st.column_config.NumberColumn(
-                        "Transactions", format="%d"
+                    "savings_rate": st.column_config.NumberColumn(
+                        "Savings Rate", format="%.2f%%"
+                    ),
+                    "income_to_expense_ratio": st.column_config.NumberColumn(
+                        "Income/Expense Ratio", format="%.2f"
+                    ),
+                    "debt_ratio": st.column_config.NumberColumn(
+                        "Debt Ratio", format="%.2f%%"
                     ),
                 },
             )
         else:
-            st.info("Monthly trends are unavailable for the selected data.")
+            monthly_trends = summary.get("monthly_trends", {})
+            if monthly_trends:
+                fallback_monthly_df = pd.DataFrame.from_dict(
+                    monthly_trends, orient="index"
+                )
+                fallback_monthly_df.index.name = "Month"
+                st.dataframe(fallback_monthly_df.reset_index(), width='stretch')
+            else:
+                st.info("Monthly trends are unavailable for the selected data.")
 
     with tabs[2]:
-        budget_by_category = summary.get("budget_by_category", {})
-        if budget_by_category:
-            budget_df = pd.DataFrame.from_dict(budget_by_category, orient="index")
-            budget_df.index.name = "Category"
-            budget_df = budget_df.reset_index()[
-                [
-                    "Category",
-                    "total_spent",
-                    "total_budget",
-                    "remaining_budget",
-                    "usage_percent",
-                ]
-            ]
+        budget_df = analysis_outputs.get("budget_variance_summary", pd.DataFrame())
+        if not budget_df.empty:
             st.dataframe(
                 budget_df,
                 width='stretch',
@@ -987,68 +1327,95 @@ def show_analysis_tables(summary, df):
                     "total_budget": st.column_config.NumberColumn(
                         "Total Budget", format="PHP %.2f"
                     ),
-                    "remaining_budget": st.column_config.NumberColumn(
-                        "Remaining Budget", format="PHP %.2f"
+                    "budget_variance": st.column_config.NumberColumn(
+                        "Budget Variance", format="PHP %.2f"
                     ),
-                    "usage_percent": st.column_config.NumberColumn(
-                        "Budget Used", format="%.1f%%"
+                    "variance_percent": st.column_config.NumberColumn(
+                        "Variance", format="%.2f%%"
                     ),
                 },
             )
         else:
-            st.info("Budget summaries are unavailable for the selected data.")
+            budget_by_category = summary.get("budget_by_category", {})
+            if budget_by_category:
+                fallback_budget_df = pd.DataFrame.from_dict(
+                    budget_by_category, orient="index"
+                )
+                fallback_budget_df.index.name = "Category"
+                st.dataframe(fallback_budget_df.reset_index(), width='stretch')
+            else:
+                st.info("Budget summaries are unavailable for the selected data.")
 
     with tabs[3]:
-        correlation = summary.get("correlation_analysis", {})
-        matrix = correlation.get("matrix", {})
-        amount_correlations = correlation.get("amount_correlations", {})
-        if matrix:
+        health_df = analysis_outputs.get("financial_health_summary", pd.DataFrame())
+        if not health_df.empty:
             st.dataframe(
-                pd.DataFrame.from_dict(matrix),
-                width='stretch',
-            )
-            if amount_correlations:
-                st.caption("Amount correlations ranked by absolute strength.")
-                st.dataframe(
-                    pd.DataFrame(
-                        amount_correlations.items(),
-                        columns=["Numeric Field", "Correlation With Amount"],
-                    ),
-                    width='stretch',
-                    hide_index=True,
-                )
-        else:
-            st.info("Correlation analysis needs at least two numeric columns.")
-
-    with tabs[4]:
-        frequency_distributions = summary.get("frequency_distributions", {})
-        if frequency_distributions:
-            selected_column = st.selectbox(
-                "Frequency column",
-                sorted(frequency_distributions.keys()),
-            )
-            frequency_df = pd.DataFrame.from_dict(
-                frequency_distributions[selected_column], orient="index"
-            )
-            frequency_df.index.name = selected_column.replace("_", " ").title()
-            st.dataframe(
-                frequency_df.reset_index(),
+                health_df,
                 width='stretch',
                 hide_index=True,
                 column_config={
-                    "count": st.column_config.NumberColumn("Count", format="%d"),
-                    "percentage": st.column_config.NumberColumn(
-                        "Percentage", format="%.2f%%"
+                    "total_income": st.column_config.NumberColumn(
+                        "Total Income", format="PHP %.2f"
+                    ),
+                    "total_expenses": st.column_config.NumberColumn(
+                        "Total Expenses", format="PHP %.2f"
+                    ),
+                    "total_savings": st.column_config.NumberColumn(
+                        "Total Savings", format="PHP %.2f"
+                    ),
+                    "total_debt_payments": st.column_config.NumberColumn(
+                        "Debt Payments", format="PHP %.2f"
+                    ),
+                    "financial_health_score": st.column_config.NumberColumn(
+                        "Health Score", format="%.2f"
+                    ),
+                    "savings_score": st.column_config.NumberColumn(
+                        "Savings Score", format="%.2f"
+                    ),
+                    "debt_score": st.column_config.NumberColumn(
+                        "Debt Score", format="%.2f"
+                    ),
+                    "budget_balance_score": st.column_config.NumberColumn(
+                        "Budget Balance Score", format="%.2f"
+                    ),
+                    "emergency_fund_score": st.column_config.NumberColumn(
+                        "Emergency Fund Score", format="%.2f"
                     ),
                 },
             )
         else:
-            st.info("Frequency distributions are unavailable for the selected data.")
+            st.info("Financial health summaries are unavailable.")
+
+    with tabs[4]:
+        expense_group_df = analysis_outputs.get("expense_group_summary", pd.DataFrame())
+        if not expense_group_df.empty:
+            st.dataframe(
+                expense_group_df,
+                width='stretch',
+                hide_index=True,
+                column_config={
+                    "total_spent": st.column_config.NumberColumn(
+                        "Total Spent", format="PHP %.2f"
+                    ),
+                    "average_transaction": st.column_config.NumberColumn(
+                        "Average Transaction", format="PHP %.2f"
+                    ),
+                    "pct_of_expenses": st.column_config.NumberColumn(
+                        "Share", format="%.2f%%"
+                    ),
+                },
+            )
+        else:
+            st.info("Expense group summaries are unavailable.")
 
 
-def show_charts(df):
+def show_charts(df, analysis_outputs=None):
     """Display visualization charts in a two-column layout."""
-    charts = create_visualization_charts(df)
+    charts = (
+        create_analysis_visualization_charts(analysis_outputs)
+        if analysis_outputs
+        else create_visualization_charts(df)
+    )
 
     chart_items = [(title, fig) for title, fig in charts.items() if fig is not None]
     if not chart_items:
@@ -1085,19 +1452,24 @@ def bento_chart(title, sub, fig, config):
             st.info("Not available for the selected data.")
 
 
-def show_overview(summary, df):
+def show_overview(summary, df, analysis_outputs=None):
     """Render the Overview page as a reference-style dashboard grid."""
     config = {"displayModeBar": False, "responsive": True}
     budget_summary = summary.get("budget_summary", {})
+    analysis_outputs = analysis_outputs or {}
 
     summary_col, trend_col = st.columns([1.55, 1], gap="large")
     with summary_col:
         show_financial_summary_panel(summary)
     with trend_col:
         bento_chart(
-            "Monthly expenses",
-            "Positive expenses per month",
-            create_mini_monthly_line(df),
+            "Income vs expenses",
+            "Processed monthly income and expense totals",
+            create_monthly_income_expenses_line(
+                analysis_outputs.get("monthly_summary", pd.DataFrame())
+            )
+            if summary.get("is_processed_summary")
+            else create_mini_monthly_line(df),
             config,
         )
 
@@ -1106,8 +1478,12 @@ def show_overview(summary, df):
     with category_col:
         bento_chart(
             "Category expenses",
-            "Top categories by positive expense amount",
-            create_top_categories_bar(df, top_n=6),
+            "Top categories by processed expense amount",
+            create_expenses_by_category_bar(
+                analysis_outputs.get("category_summary", pd.DataFrame()), top_n=6
+            )
+            if summary.get("is_processed_summary")
+            else create_top_categories_bar(df, top_n=6),
             config,
         )
     with refund_col:
@@ -1125,12 +1501,16 @@ def show_overview(summary, df):
     with budget_wide_col:
         bento_chart(
             "Budget vs expenses",
-            "Monthly category budget compared with actual expenses",
-            create_budget_vs_actual_chart(df),
+            "Processed category variance against budget",
+            create_budget_variance_by_category_bar(
+                analysis_outputs.get("budget_variance_summary", pd.DataFrame())
+            )
+            if summary.get("is_processed_summary")
+            else create_budget_vs_actual_chart(df),
             config,
         )
     with insight_col:
-        show_insight_preview(df)
+        show_insight_preview(df, summary)
 
     st.write("")
     show_top_categories_table(summary)
@@ -1156,7 +1536,7 @@ def _highlight_numbers(text):
     return safe
 
 
-def show_visual_insights(df):
+def show_visual_insights(df, summary=None):
     """Render action-first insights as visual cards."""
     section_heading(
         "Analytical findings",
@@ -1164,15 +1544,72 @@ def show_visual_insights(df):
     )
 
     cards = []
-    for item in generate_insights(df):
-        prefix, sep, rest = item.partition(":")
-        if sep and prefix.strip() in INSIGHT_STYLE:
-            tone, kind = INSIGHT_STYLE[prefix.strip()]
-            text = rest.strip()
-        else:
-            tone, kind = "", "Insight"
-            text = item
-        cards.append((tone, kind, text))
+    if summary and summary.get("is_processed_summary"):
+        health = summary.get("financial_health_summary", {})
+        emergency = summary.get("emergency_fund_summary", {})
+        budget_rows = summary.get("budget_by_category", {})
+
+        if budget_rows:
+            category, values = max(
+                budget_rows.items(),
+                key=lambda item: item[1].get("total_spent", 0)
+                - item[1].get("total_budget", 0),
+            )
+            variance = values.get("total_spent", 0) - values.get("total_budget", 0)
+            cards.append(
+                (
+                    "tone-risk" if variance > 0 else "tone-structure",
+                    "Budget variance",
+                    f"{category} has the largest processed budget variance at {format_php(variance)}.",
+                )
+            )
+
+        latest_score = summary.get("latest_financial_health_score")
+        average_score = health.get("average_financial_health_score")
+        if latest_score is not None:
+            average_score_text = (
+                f"{average_score:.2f}" if average_score is not None else "N/A"
+            )
+            cards.append(
+                (
+                    "tone-trend",
+                    "Financial health",
+                    f"Latest score is {latest_score:.2f}; average score across observed months is {average_score_text}.",
+                )
+            )
+
+        savings_rate = summary.get("average_savings_rate")
+        debt_ratio = summary.get("average_debt_ratio")
+        if savings_rate is not None and debt_ratio is not None:
+            cards.append(
+                (
+                    "tone-conclusion",
+                    "Savings and debt",
+                    f"Average savings rate is {savings_rate:.2f}% and average debt ratio is {debt_ratio:.2f}% from processed monthly summaries.",
+                )
+            )
+
+        consistency = emergency.get("consistency_rate_percent")
+        months_with = emergency.get("months_with_contribution")
+        months_total = emergency.get("months_observed")
+        if consistency is not None:
+            cards.append(
+                (
+                    "tone-structure",
+                    "Emergency fund",
+                    f"Emergency fund contributions appear in {months_with} of {months_total} months, a {consistency:.2f}% consistency rate.",
+                )
+            )
+    else:
+        for item in generate_insights(df):
+            prefix, sep, rest = item.partition(":")
+            if sep and prefix.strip() in INSIGHT_STYLE:
+                tone, kind = INSIGHT_STYLE[prefix.strip()]
+                text = rest.strip()
+            else:
+                tone, kind = "", "Insight"
+                text = item
+            cards.append((tone, kind, text))
 
     for index in range(0, len(cards), 2):
         cols = st.columns(2, gap="large")
@@ -1264,22 +1701,32 @@ if cleaned_df is None:
     st.info("Dashboard pages will appear after the project dataset is available.")
 else:
     filtered_df = filter_dataset(cleaned_df)
+    analysis_outputs = load_processed_analysis_outputs()
+    processed_analysis = load_processed_financial_analysis()
 
     if filtered_df.empty:
         page_title(page, total_rows=len(cleaned_df))
         st.warning("No records match the selected filters.")
     else:
-        summary = get_basic_summary(filtered_df)
+        base_summary = get_basic_summary(filtered_df)
+        summary = build_processed_display_summary(
+            analysis_outputs,
+            processed_analysis,
+            base_summary,
+        )
         showing = f"{len(filtered_df):,} of {len(cleaned_df):,} transactions"
         page_title(page, showing=showing)
 
         if page == "Overview":
-            show_overview(summary, filtered_df)
+            show_overview(summary, filtered_df, analysis_outputs)
         elif page == "Visualizations":
-            show_charts(filtered_df)
+            show_charts(
+                filtered_df,
+                analysis_outputs if summary.get("is_processed_summary") else None,
+            )
         elif page == "Analysis":
-            show_analysis_tables(summary, filtered_df)
+            show_analysis_tables(summary, filtered_df, analysis_outputs)
         elif page == "Data":
             show_data_page(raw_df, cleaned_df, filtered_df)
         elif page == "Insights":
-            show_visual_insights(filtered_df)
+            show_visual_insights(filtered_df, summary)
