@@ -1,4 +1,5 @@
 from html import escape
+import io
 import re
 
 import pandas as pd
@@ -10,6 +11,7 @@ from src.config import BASE_DATASET_NAME
 from src.data_cleaning import clean_dataset
 from src.data_loader import dataset_exists, load_raw_dataset, save_cleaned_dataset
 from src.insights import generate_insights
+from src.summary_exports import export_summary_csvs
 from src.visualizations import (
     create_budget_gauge,
     create_mini_monthly_line,
@@ -699,12 +701,18 @@ def filter_dataset(df):
 
     categorical_columns = [
         column
-        for column in ["category", "payment_method", "status", "necessity_type"]
+        for column in [
+            "account_type",
+            "category",
+            "payment_method",
+            "status",
+            "necessity_type",
+        ]
         if column in filtered_df.columns
     ]
 
     if categorical_columns:
-        with st.sidebar.expander("Categories & status", expanded=False):
+        with st.sidebar.expander("Account & categories", expanded=False):
             st.caption("Leave a field empty to include all values.")
             for column in categorical_columns:
                 options = sorted(filtered_df[column].dropna().astype(str).unique())
@@ -844,8 +852,51 @@ def show_cleaning_report(raw_df, cleaned_df, filtered_df):
     st.markdown(report_html, unsafe_allow_html=True)
 
 
-def show_analysis_tables(summary):
+def load_raw_data_from_sidebar():
+    """Load raw CSV from sidebar upload or project data/raw folder."""
+    uploaded = st.sidebar.file_uploader(
+        "Upload CSV",
+        type=["csv"],
+        help=f"Optional. Falls back to data/raw/{BASE_DATASET_NAME}.",
+    )
+    if uploaded is not None:
+        st.session_state["uploaded_raw"] = uploaded.getvalue()
+        return pd.read_csv(io.BytesIO(st.session_state["uploaded_raw"]))
+
+    if "uploaded_raw" in st.session_state:
+        del st.session_state["uploaded_raw"]
+
+    if dataset_exists():
+        return load_raw_dataset()
+    return None
+
+
+def show_analysis_tables(summary, df):
     """Display grouped analysis tables in tabs."""
+    export_col, _ = st.columns([1, 3])
+    with export_col:
+        if st.button("Export summary CSVs", width="stretch"):
+            exported_paths = export_summary_csvs(df)
+            st.session_state["exported_summary_paths"] = exported_paths
+
+    exported_paths = st.session_state.get("exported_summary_paths")
+    if exported_paths:
+        st.success(
+            "Summary CSVs saved to `data/outputs/`: "
+            + ", ".join(f"`{path.name}`" for path in exported_paths.values())
+        )
+        download_cols = st.columns(len(exported_paths))
+        for col, (name, path) in zip(download_cols, exported_paths.items()):
+            with col:
+                st.download_button(
+                    f"Download {name}",
+                    path.read_bytes(),
+                    file_name=path.name,
+                    key=f"download_{path.name}",
+                    width="stretch",
+                )
+
+    st.write("")
     tabs = st.tabs(
         [
             "Category totals",
@@ -1113,15 +1164,31 @@ def show_visual_insights(df):
 
 
 def show_data_page(raw_df, cleaned_df, filtered_df):
-    """Render the Data page: preview + cleaning report."""
-    preview_tab, cleaning_tab = st.tabs(["Filtered data", "Cleaning report"])
-    with preview_tab:
-        st.dataframe(filtered_df.head(50), width='stretch')
-    with cleaning_tab:
-        show_cleaning_report(raw_df, cleaned_df, filtered_df)
+    """Render the Data page: raw, cleaned, and cleaning report."""
+    raw_tab, cleaned_tab, cleaning_tab = st.tabs(
+        ["Raw dataset", "Cleaned dataset", "Cleaning report"]
+    )
+
+    with raw_tab:
+        raw_cols = st.columns(2)
+        raw_cols[0].metric("Raw rows", f"{raw_df.shape[0]:,}")
+        raw_cols[1].metric("Columns", f"{raw_df.shape[1]:,}")
+        st.dataframe(raw_df.head(100), width="stretch")
+
+    with cleaned_tab:
+        cleaned_cols = st.columns(2)
+        cleaned_cols[0].metric("Cleaned rows", f"{cleaned_df.shape[0]:,}")
+        cleaned_cols[1].metric("Filtered rows", f"{filtered_df.shape[0]:,}")
+        st.caption(
+            "Sidebar filters apply to Overview, Visualizations, Analysis, and Insights — not this full cleaned preview."
+        )
+        st.dataframe(cleaned_df.head(100), width="stretch")
         if st.button("Save cleaned dataset"):
             saved_path = save_cleaned_dataset(cleaned_df)
             st.success(f"Cleaned dataset saved to `{saved_path}`")
+
+    with cleaning_tab:
+        show_cleaning_report(raw_df, cleaned_df, filtered_df)
 
 
 NAV_PAGES = ["Overview", "Visualizations", "Analysis", "Data", "Insights"]
@@ -1148,13 +1215,6 @@ NAV_STYLES = {
 
 inject_styles()
 
-raw_df = None
-cleaned_df = None
-
-if dataset_exists():
-    raw_df = load_raw_dataset()
-    cleaned_df = clean_dataset(raw_df)
-
 sidebar_brand()
 
 with st.sidebar:
@@ -1167,10 +1227,15 @@ with st.sidebar:
     )
     st.markdown("---")
 
+raw_df = load_raw_data_from_sidebar()
+cleaned_df = clean_dataset(raw_df) if raw_df is not None else None
+
 if cleaned_df is None:
     page_title("Overview")
-    st.error("Place financial_expenses_dataset_raw.csv inside data/raw/")
-    st.info("Dashboard pages will appear after the CSV file is added.")
+    st.error(
+        f"Upload a CSV in the sidebar or place `{BASE_DATASET_NAME}` inside `data/raw/`."
+    )
+    st.info("Dashboard pages will appear after a valid dataset is loaded.")
 else:
     filtered_df = filter_dataset(cleaned_df)
 
@@ -1187,7 +1252,7 @@ else:
         elif page == "Visualizations":
             show_charts(filtered_df)
         elif page == "Analysis":
-            show_analysis_tables(summary)
+            show_analysis_tables(summary, filtered_df)
         elif page == "Data":
             show_data_page(raw_df, cleaned_df, filtered_df)
         elif page == "Insights":
