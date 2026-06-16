@@ -1,0 +1,36 @@
+Data Name,Data Type,Allowable Values,Constraints,Description
+transaction_id,string,Alpha-numeric (FEM-PH-XXXXXX-XXXX),"Primary Key, Unique, Not null",The primary key uniquely identifies each transaction record.
+transaction_date,datetime64[ns],YYYY-MM-DD,Not null,The exact calendar date timestamp detailing when the transaction occurred.
+month,period[M],YYYY-MM,Not null,Financial accounting period tracking monthly data continuity across fiscal years.
+household_id,string,Alpha-numeric (HH-PH-XXXX),"Unique, Not null",The unique identifier assigned to the specific family unit or household.
+region,category,Alphanumeric values,Not null,The broader geographic region where the household resides.
+province_city,string,Alphanumeric values,Not null,"The specific city, municipality, or province of the household."
+family_size,Int64,Integer > 0,Must be greater than 0,The total count of individuals living within the household.
+dependent_count,Int64,Integer >= 0,Must be greater than or equal to 0,The total number of individuals in the household financially supported by the primary earners.
+monthly_net_income_php,float64,Real numbers (≥ 0.00),Not null,"The total take-home income of the household for the month, after taxes and deductions."
+income_class_assumption,string,Alphanumeric values,Not null,The economic bracket of the family.
+housing_status,category,"Renting', 'Owned'",Not null,The legal or ownership status of the family's primary residence.
+transport_profile,string,Alphanumeric values,Not null,A summary of the family's primary modes of transportation and commuting habits.
+schooling_profile,string,Alphanumeric values,Not null,A summary of the household dependents schooling status.
+transaction_type,category,"Income', Expense', 'Debt Payment'",Not null,The classification of the financial event.
+cash_flow_direction,category,"Inflow', 'Outflow'",Not null,Indicates whether the transaction represents money coming into the household or leaving it.
+category,category,"Connectivity', 'Utilities', 'Lifestyle & Misc', 'Food', 'Education', 'Housing', 'Debt/Loans', 'Transportation', 'Income', 'Savings', 'Healthcare', 'Emergency Fund'",Not null,The expense classification grouping transactions into fund allocation.
+subcategory,category,"Internet', 'Entertainment', 'Streaming', 'Drinking Water', 'School Allowance', 'Rent', 'Fast Food', 'Loan Payment', 'School Snacks', 'Tricycle Fare', 'Unknown', 'School Supplies', 'Bus/UV Fare', 'Side Hustle', 'Groceries', 'Public Market', 'Personal Care', 'Savings Deposit', 'School Project', 'Dental', 'Emergency Treatment', 'Salary', 'Rice', 'Checkup', 'Water Bill', 'Gifts', 'Appliance Repair', 'LPG', 'Emergency Fund Contribution', 'Jeepney Fare', 'PTA/School Fee', 'Electricity', 'Clothing', 'Medicine', 'Sari-sari Store'",Not null,The granular classification that breaks down each category into specific spending types.
+merchanet_or_source,string,Alphanumeric values,Not null,"The name of the business, vendor, or the service provider, identifying where or to whom the payment was made."
+description,string,Alphanumeric values,Not null,A short narrative providing context or reason for the transaction.
+amount_php,float64,Real numbers (≥ 0.00),Not null,"The monetary value of the transaction in Philippine peso, including negative values for refunded transactions."
+payment_method,category,"Bank Transfer', 'GCash', 'Maya', 'Cash', 'Debit Card'",Not null,The channel is utilized to settle transactions or the financial expense.
+channel,category,Alphanumeric values,Not null,The medium through which the transaction took place.
+necessity_level,category,"Need', 'Want', 'Obligation'",Not null,The behavioral classification that tags each transaction based on its financial priority.
+is_recurring,category,"Yes', 'No'",Not null,Indicates if the transaction is a repeating event.
+budget_category,category,"Connectivity', 'Lifestyle & Misc', 'Food', 'Education', 'Housing', 'Debt/Loans', 'Transportation', 'Income', 'Savings', 'Healthcare', 'Utilities', 'Emergency Fund'",Not null,The specific budget bucket to which this transaction is applied.
+monthly_budget_php,float64,Real numbers (≥ 0.00),Not null,The total amount of money allocated to the budget category for the current month
+budget_period,category,"Monthly', 'Weekly', 'Irregular'",Not null,The cadence at which the budget allocation is distributed or reviewed.
+member_role,category,"Mother', 'Father', 'Child'",Not null,The specific family member role responsible for or associated with the transaction.
+school_related,category,"Yes', 'No'",Not null,A binary indicator of whether the expense is specifically for educational purposes.
+health_related,category,"Yes', 'No'",Not null,A binary indicator of whether the expense is for medical or healthcare needs.
+debt_related,category,"Yes', 'No'",Not null,A binary indicator of whether the transaction relates to loan repayment or debt servicing.
+savings_related,category,"Yes', 'No'",Not null,A binary indicator of whether the transaction involves placing money into savings.
+status,category,"Paid', 'Received'",Not null,The current processing state of the transaction.
+receipt_available,category,"Yes', 'No'",Not null,Evidence flag confirming if a physical or digital receipt exists for the record.
+notes,string,"Alphanumeric values, NULL",Nullable String,An optional free-text field for supplementary remarks about the transaction.
