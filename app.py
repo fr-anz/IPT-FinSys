@@ -13,7 +13,7 @@ from src.analysis import (
 from src.config import BASE_DATASET_NAME
 from src.data_cleaning import clean_dataset
 from src.data_loader import load_raw_dataset, save_cleaned_dataset
-from src.insights import generate_insights
+from src.insights import INSIGHT_TONES, generate_insights, generate_insight_bundle, insight_to_legacy_string, generate_insight_bundle
 from src.summary_exports import export_summary_csvs
 from src.visualizations import (
     create_analysis_visualization_charts,
@@ -920,56 +920,19 @@ def show_top_categories_table(summary, limit=5):
 def parse_insight(item):
     """Split a generated insight into label, tone, and body."""
     prefix, sep, rest = item.partition(":")
-    if sep and prefix.strip() in INSIGHT_STYLE:
-        tone, kind = INSIGHT_STYLE[prefix.strip()]
-        return tone, kind, rest.strip()
+    if sep:
+        kind = prefix.strip()
+        tone = INSIGHT_TONES.get(kind, "")
+        if tone:
+            return tone, kind, rest.strip()
     return "", "Insight", item
 
 
 def show_insight_preview(df, summary=None, limit=3):
-    """Render the first few analytical findings for the Overview page."""
-    if summary and summary.get("is_processed_summary"):
-        budget_rows = summary.get("budget_by_category", {})
-        highest_overspend = None
-        if budget_rows:
-            highest_overspend = max(
-                budget_rows.items(),
-                key=lambda item: item[1].get("total_spent", 0)
-                - item[1].get("total_budget", 0),
-            )
-        health_score = summary.get("latest_financial_health_score")
-        savings_rate = summary.get("average_savings_rate")
-        debt_ratio = summary.get("average_debt_ratio")
-        processed_items = []
-        if highest_overspend:
-            category, values = highest_overspend
-            variance = values.get("total_spent", 0) - values.get("total_budget", 0)
-            processed_items.append(
-                (
-                    "tone-risk" if variance > 0 else "tone-structure",
-                    "Budget variance",
-                    f"{category} variance is {format_php(variance)}.",
-                )
-            )
-        if health_score is not None:
-            processed_items.append(
-                (
-                    "tone-trend",
-                    "Financial health",
-                    f"Latest financial health score is {health_score:.2f} out of 100.",
-                )
-            )
-        if savings_rate is not None and debt_ratio is not None:
-            processed_items.append(
-                (
-                    "tone-conclusion",
-                    "Savings and debt",
-                    f"Average savings rate is {savings_rate:.2f}% while average debt ratio is {debt_ratio:.2f}%.",
-                )
-            )
-        items = processed_items[:limit]
-    else:
-        items = [parse_insight(item) for item in generate_insights(df)[:limit]]
+    """Render the first few key priorities for the Overview page."""
+    bundle = generate_insight_bundle(df, summary=summary)
+    priorities = bundle.get("priorities", [])[:limit]
+    items = [parse_insight(insight_to_legacy_string(item)) for item in priorities]
     cards_html = "".join(
         f"""
         <div class="preview-item">
@@ -1516,18 +1479,6 @@ def show_overview(summary, df, analysis_outputs=None):
     show_top_categories_table(summary)
 
 
-INSIGHT_STYLE = {
-    "Budget variance": ("tone-risk", "Budget variance"),
-    "Budget exposure": ("tone-risk", "Budget exposure"),
-    "Category concentration": ("tone-structure", "Category concentration"),
-    "Refund adjustment": ("tone-adjustment", "Refund adjustment"),
-    "Peak period": ("tone-trend", "Peak period"),
-    "Monthly volatility": ("tone-trend", "Monthly volatility"),
-    "Priority mix": ("tone-structure", "Priority mix"),
-    "Analytical conclusion": ("tone-conclusion", "Analytical conclusion"),
-}
-
-
 def _highlight_numbers(text):
     """Bold peso amounts and percentages inside escaped insight text."""
     safe = escape(text)
@@ -1537,92 +1488,71 @@ def _highlight_numbers(text):
 
 
 def show_visual_insights(df, summary=None):
-    """Render action-first insights as visual cards."""
-    section_heading(
+    """Render insights organized by section: priorities, findings, recommendations, conclusion."""
+    bundle = generate_insight_bundle(df, summary=summary)
+    
+    # Display filter context note
+    filter_note = bundle.get("filter_note", "")
+    if filter_note:
+        st.caption(filter_note)
+    
+    # Add download button
+    export_text = bundle.get("export_text", "")
+    if export_text:
+        st.download_button(
+            label="Download insights",
+            data=export_text,
+            file_name="insights.txt",
+            mime="text/plain",
+        )
+    
+    st.write("")
+    
+    def render_section(items, title, subtitle):
+        """Helper to render a section of insight cards."""
+        if not items:
+            return
+        section_heading(title, subtitle)
+        cards = [parse_insight(insight_to_legacy_string(item)) for item in items]
+        
+        for index in range(0, len(cards), 2):
+            cols = st.columns(2, gap="large")
+            for col, (tone, kind, text) in zip(cols, cards[index : index + 2]):
+                with col:
+                    st.markdown(
+                        f'<div class="insight-card {tone}">'
+                        f'<div class="ic-body">'
+                        f'<span class="ic-kind">{escape(kind)}</span>'
+                        f'<span class="ic-text">{_highlight_numbers(text)}</span>'
+                        f"</div></div>",
+                        unsafe_allow_html=True,
+                    )
+        st.write("")
+    
+    # Render each section from the bundle
+    render_section(
+        bundle.get("priorities", []),
+        "Key priorities",
+        "The highest-severity findings and recommendations for immediate review.",
+    )
+    
+    render_section(
+        bundle.get("findings", []),
         "Analytical findings",
         "Evidence-based interpretation of budget variance, spending concentration, refunds, and monthly movement.",
     )
-
-    cards = []
-    if summary and summary.get("is_processed_summary"):
-        health = summary.get("financial_health_summary", {})
-        emergency = summary.get("emergency_fund_summary", {})
-        budget_rows = summary.get("budget_by_category", {})
-
-        if budget_rows:
-            category, values = max(
-                budget_rows.items(),
-                key=lambda item: item[1].get("total_spent", 0)
-                - item[1].get("total_budget", 0),
-            )
-            variance = values.get("total_spent", 0) - values.get("total_budget", 0)
-            cards.append(
-                (
-                    "tone-risk" if variance > 0 else "tone-structure",
-                    "Budget variance",
-                    f"{category} has the largest processed budget variance at {format_php(variance)}.",
-                )
-            )
-
-        latest_score = summary.get("latest_financial_health_score")
-        average_score = health.get("average_financial_health_score")
-        if latest_score is not None:
-            average_score_text = (
-                f"{average_score:.2f}" if average_score is not None else "N/A"
-            )
-            cards.append(
-                (
-                    "tone-trend",
-                    "Financial health",
-                    f"Latest score is {latest_score:.2f}; average score across observed months is {average_score_text}.",
-                )
-            )
-
-        savings_rate = summary.get("average_savings_rate")
-        debt_ratio = summary.get("average_debt_ratio")
-        if savings_rate is not None and debt_ratio is not None:
-            cards.append(
-                (
-                    "tone-conclusion",
-                    "Savings and debt",
-                    f"Average savings rate is {savings_rate:.2f}% and average debt ratio is {debt_ratio:.2f}% from processed monthly summaries.",
-                )
-            )
-
-        consistency = emergency.get("consistency_rate_percent")
-        months_with = emergency.get("months_with_contribution")
-        months_total = emergency.get("months_observed")
-        if consistency is not None:
-            cards.append(
-                (
-                    "tone-structure",
-                    "Emergency fund",
-                    f"Emergency fund contributions appear in {months_with} of {months_total} months, a {consistency:.2f}% consistency rate.",
-                )
-            )
-    else:
-        for item in generate_insights(df):
-            prefix, sep, rest = item.partition(":")
-            if sep and prefix.strip() in INSIGHT_STYLE:
-                tone, kind = INSIGHT_STYLE[prefix.strip()]
-                text = rest.strip()
-            else:
-                tone, kind = "", "Insight"
-                text = item
-            cards.append((tone, kind, text))
-
-    for index in range(0, len(cards), 2):
-        cols = st.columns(2, gap="large")
-        for col, (tone, kind, text) in zip(cols, cards[index : index + 2]):
-            with col:
-                st.markdown(
-                    f'<div class="insight-card {tone}">'
-                    f'<div class="ic-body">'
-                    f'<span class="ic-kind">{escape(kind)}</span>'
-                    f'<span class="ic-text">{_highlight_numbers(text)}</span>'
-                    f"</div></div>",
-                    unsafe_allow_html=True,
-                )
+    
+    render_section(
+        bundle.get("recommendations", []),
+        "Recommendations",
+        "Actionable steps tied to the observed spending, budget, and savings patterns.",
+    )
+    
+    render_section(
+        bundle.get("conclusions", []),
+        "Conclusion",
+        "How to interpret the filtered or processed financial view as a whole.",
+    )
 
 
 def show_data_page(raw_df, cleaned_df, filtered_df):
