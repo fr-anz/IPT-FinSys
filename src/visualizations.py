@@ -367,7 +367,7 @@ def create_financial_health_score_line(financial_health_summary):
     return _style_analysis_figure(fig, "Financial Health Score Over Time")
 
 
-def create_analysis_visualization_charts(analysis_outputs=None):
+def create_analysis_visualization_charts(analysis_outputs=None, df=None):
     """Return reusable Plotly charts built from saved analysis outputs."""
     data = analysis_outputs or load_analysis_outputs()
     return {
@@ -389,6 +389,8 @@ def create_analysis_visualization_charts(analysis_outputs=None):
         "Financial health score over time": create_financial_health_score_line(
             data.get("financial_health_summary")
         ),
+        "Expense amount distribution": create_histogram(df) if df is not None else None,
+        "Payment method distribution": create_payment_method_pie(df) if df is not None else None,
     }
 
 
@@ -987,6 +989,49 @@ def create_top_categories_bar(df, top_n=5):
         fig.update_xaxes(visible=False, autorange=True)
     fig.update_yaxes(showgrid=False, title_text="", tickfont=dict(color="#18201d", size=12))
     return fig
+
+
+def create_payment_method_pie(df):
+    """Create a pie chart showing expense distribution by payment method."""
+    chart_df = _prepare_amount_data(df, ["payment_method"])
+    if chart_df is None:
+        return None
+
+    chart_df = _expense_only(chart_df)
+    if chart_df.empty:
+        return None
+
+    payment_totals = (
+        chart_df.groupby("payment_method", observed=True)["amount_php"]
+        .sum()
+        .reset_index()
+        .sort_values("amount_php", ascending=False)
+    )
+    payment_totals = payment_totals[payment_totals["amount_php"] > 0]
+    if payment_totals.empty:
+        return None
+
+    fig = px.pie(
+        payment_totals,
+        values="amount_php",
+        names="payment_method",
+        color_discrete_sequence=COLOR_SEQUENCE,
+        hole=0.48,
+    )
+    fig.update_traces(
+        hovertemplate="<b>%{label}</b><br>PHP %{value:,.2f}<br>%{percent}<extra></extra>",
+        marker=dict(line=dict(color="#ffffff", width=2)),
+        textinfo="percent+label",
+        textfont=dict(size=12),
+    )
+    fig.add_annotation(
+        text="Payment",
+        x=0.5,
+        y=0.5,
+        showarrow=False,
+        font=dict(color="#68716c", size=13),
+    )
+    return _style_figure(fig, height=420)
 
 
 def create_visualization_charts(df):
