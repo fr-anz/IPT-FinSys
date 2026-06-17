@@ -1409,10 +1409,48 @@ def show_analysis_tables(summary, df, analysis_outputs=None):
             st.info("Expense group summaries are unavailable.")
 
 
+CHART_CAPTIONS = {
+    "Monthly income vs expenses": (
+        "Tracks total income and total expenses side by side each month. "
+        "Months where the expense line rises above income indicate overspending periods that require closer review."
+    ),
+    "Expenses by category": (
+        "Ranks spending categories from highest to lowest. "
+        "The longest bar represents the household's primary cost driver and is the best target for budget control."
+    ),
+    "Expense group distribution": (
+        "Shows the split between Needs and Wants spending. "
+        "A high Needs share is expected for most households, but a growing Wants share may signal discretionary overspending."
+    ),
+    "Monthly savings rate": (
+        "Plots the savings rate per month against a 15% target benchmark. "
+        "Months consistently below the dashed line indicate that savings goals are not being met."
+    ),
+    "Budget variance by category": (
+        "Compares actual spending against the budget limit for each category. "
+        "Bars extending to the right mean the category went over budget; bars to the left mean it stayed under."
+    ),
+    "Financial health score over time": (
+        "Measures overall financial health on a 0–100 scale each month, based on budget adherence, savings rate, and debt ratio. "
+        "A declining trend signals that financial habits are worsening and need immediate attention."
+    ),
+    "Expense amount distribution": (
+        "Shows how often transactions fall within each amount range. "
+        "A tall bar near lower amounts confirms that most purchases are small and frequent, "
+        "while sparse bars at higher amounts indicate that large expenses are rare outliers."
+    ),
+    "Payment method distribution": (
+        "Breaks down total spending by how payments were made (cash, GCash, card, etc.). "
+        "A dominant slice may reveal over-reliance on one payment channel, "
+        "which can make tracking and budgeting harder."
+    ),
+}
+
+
 def show_charts(df, analysis_outputs=None):
     """Display visualization charts in a two-column layout."""
     charts = (
-        create_analysis_visualization_charts(analysis_outputs)
+        create_analysis_visualization_charts(analysis_outputs, df=df)
         if analysis_outputs
         else create_visualization_charts(df)
     )
@@ -1436,6 +1474,9 @@ def show_charts(df, analysis_outputs=None):
                         st.plotly_chart(fig, width='stretch', config=chart_config)
                     else:
                         st.pyplot(fig, width='stretch')
+                    caption = CHART_CAPTIONS.get(title)
+                    if caption:
+                        st.caption(caption)
 
 
 def bento_chart(title, sub, fig, config):
