@@ -87,6 +87,24 @@ def _records(df):
     return _json_ready(df.to_dict(orient="records"))
 
 
+def _expense_rows(df, amount_column="amount_php"):
+    """Return actual expense rows, excluding income/savings/debt inflows."""
+    if amount_column not in df.columns:
+        return df.iloc[0:0].copy()
+
+    amounts = pd.to_numeric(df[amount_column], errors="coerce")
+    mask = amounts > 0
+
+    if "transaction_type" in df.columns:
+        transaction_type = df["transaction_type"].astype(str).str.strip().str.lower()
+        mask &= transaction_type == "expense"
+    elif "category" in df.columns:
+        category = df["category"].astype(str).str.strip().str.lower()
+        mask &= category != "income"
+
+    return df[mask].copy()
+
+
 def load_preprocessed_datasets(
     processed_path=PROCESSED_TRANSACTIONS_PATH,
     monthly_path=MONTHLY_AGGREGATION_PATH,
@@ -262,6 +280,24 @@ def _expense_group_summary(processed_df):
     return _records(expense_group_summary)
 
 
+NEEDS_GROUP_LABELS = {"needs", "need", "obligation"}
+WANTS_GROUP_LABELS = {"wants", "want"}
+
+
+def _needs_wants_masks(group_series):
+    """Return boolean masks for needs and wants rows from a label series.
+
+    Matching is tolerant of singular/plural forms and the alternate
+    ``necessity_type`` vocabulary so the 50/30/20 calculations do not silently
+    collapse to zero when the classification labels differ from the canonical
+    ``expense_group`` values.
+    """
+    normalized = group_series.astype(str).str.strip().str.lower()
+    needs_mask = normalized.isin(NEEDS_GROUP_LABELS)
+    wants_mask = normalized.isin(WANTS_GROUP_LABELS)
+    return needs_mask, wants_mask
+
+
 def _needs_wants_ratio(processed_df):
     expense_df = processed_df[processed_df["transaction_type_normalized"] == "expense"]
     if expense_df.empty:
@@ -271,6 +307,7 @@ def _needs_wants_ratio(processed_df):
             "needs_to_wants_ratio": None,
             "needs_percent": None,
             "wants_percent": None,
+            "classification_column": None,
         }
 
     if "expense_group" in expense_df.columns:
@@ -290,9 +327,9 @@ def _needs_wants_ratio(processed_df):
             "classification_column": None,
         }
 
-    groups = expense_df[group_column].astype(str).str.strip().str.lower()
-    needs_spending = expense_df.loc[groups.eq("needs") | groups.eq("need"), "actual_amount"].sum()
-    wants_spending = expense_df.loc[groups.eq("wants") | groups.eq("want"), "actual_amount"].sum()
+    needs_mask, wants_mask = _needs_wants_masks(expense_df[group_column])
+    needs_spending = expense_df.loc[needs_mask, "actual_amount"].sum()
+    wants_spending = expense_df.loc[wants_mask, "actual_amount"].sum()
     classified_total = needs_spending + wants_spending
 
     return {
@@ -442,14 +479,14 @@ def _financial_health_score_summary(processed_df, monthly_df, monthly_financials
     ].copy()
 
     if group_column:
-        groups = expense_df[group_column].astype(str).str.strip().str.lower()
+        needs_mask, wants_mask = _needs_wants_masks(expense_df[group_column])
         needs_spending = (
-            expense_df[groups.eq("needs") | groups.eq("need")]
+            expense_df[needs_mask]
             .groupby("year_month", observed=True)["actual_amount"]
             .sum()
         )
         wants_spending = (
-            expense_df[groups.eq("wants") | groups.eq("want")]
+            expense_df[wants_mask]
             .groupby("year_month", observed=True)["actual_amount"]
             .sum()
         )
@@ -579,7 +616,9 @@ def analyze_preprocessed_finances(transactions_df, monthly_df):
         for column in FINANCIAL_TRANSACTION_TYPES.values()
     }
     total_transactions = int(len(processed_df))
-    transaction_amounts = processed_df["actual_amount"]
+    expense_amounts = processed_df.loc[
+        processed_df["transaction_type_normalized"] == "expense", "actual_amount"
+    ]
 
     budget_variance, highest_overspending_category = _budget_variance_by_category(
         processed_df
@@ -604,7 +643,7 @@ def analyze_preprocessed_finances(transactions_df, monthly_df):
         ),
         "statistical_analysis": {
             "average_monthly_expense": _round_value(monthly["total_expenses"].mean()),
-            "median_transaction_amount": _round_value(transaction_amounts.median()),
+            "median_transaction_amount": _round_value(expense_amounts.median()),
             "standard_deviation_of_monthly_expenses": _round_value(
                 monthly["total_expenses"].std()
             ),
@@ -708,21 +747,24 @@ def get_basic_summary(df):
         analysis_df["amount_php"], errors="coerce"
     )
     amount_values = analysis_df["amount_php"].dropna()
-    expense_values = amount_values[amount_values > 0]
+    expense_df = _expense_rows(analysis_df)
+    expense_values = expense_df["amount_php"].dropna()
     refund_values = amount_values[amount_values < 0]
     amount_mode = amount_values.mode()
 
-    net_amount = float(amount_values.sum())
+    cash_flow_total = float(amount_values.sum())
     gross_expense_total = float(expense_values.sum())
     refund_total = float(abs(refund_values.sum()))
+    net_spending = gross_expense_total - refund_total
 
     summary["total_transactions"] = int(amount_values.count())
     summary["expense_transactions"] = int(expense_values.count())
     summary["refund_transactions"] = int(refund_values.count())
-    summary["net_amount"] = net_amount
+    summary["cash_flow_total"] = cash_flow_total
+    summary["net_spending"] = net_spending
     summary["gross_expense_total"] = gross_expense_total
     summary["refund_total"] = refund_total
-    summary["total_expense"] = net_amount
+    summary["total_expense"] = net_spending
     summary["average_transaction"] = (
         float(amount_values.mean()) if not amount_values.empty else None
     )
@@ -746,7 +788,16 @@ def get_basic_summary(df):
         else None,
     }
 
-    numeric_columns = analysis_df.select_dtypes(include="number").columns.tolist()
+    excluded_correlation_columns = {
+        "transaction_id",
+        "household_id",
+    }
+    numeric_columns = [
+        column
+        for column in analysis_df.select_dtypes(include="number").columns.tolist()
+        if column not in excluded_correlation_columns
+        and analysis_df[column].nunique(dropna=True) > 1
+    ]
     if len(numeric_columns) >= 2:
         correlation_matrix = analysis_df[numeric_columns].corr().round(4)
         summary["correlation_analysis"] = {
@@ -798,8 +849,7 @@ def get_basic_summary(df):
 
     if "category" in analysis_df.columns:
         category_totals = (
-            analysis_df.dropna(subset=["amount_php"])
-            .query("amount_php > 0")
+            expense_df.dropna(subset=["amount_php"])
             .groupby("category", observed=True)["amount_php"]
             .sum()
             .sort_values(ascending=False)
@@ -831,7 +881,7 @@ def get_basic_summary(df):
             monthly_df.groupby("month")["amount_php"]
             .agg(
                 total="sum",
-                net_amount="sum",
+                cash_flow_total="sum",
                 average="mean",
                 average_transaction="mean",
                 transaction_count="count",
@@ -840,7 +890,7 @@ def get_basic_summary(df):
             .round(2)
         )
         monthly_expenses = (
-            monthly_df[monthly_df["amount_php"] > 0]
+            _expense_rows(monthly_df)
             .groupby("month", observed=True)["amount_php"]
             .sum()
         )
@@ -856,6 +906,9 @@ def get_basic_summary(df):
         monthly_trends["refund_total"] = (
             monthly_trends.index.to_series().map(monthly_refunds).fillna(0).round(2)
         )
+        monthly_trends["net_spending"] = (
+            monthly_trends["gross_expense_total"] - monthly_trends["refund_total"]
+        ).round(2)
         summary["monthly_trends"] = monthly_trends.to_dict(orient="index")
 
     if "budget_limit_php" in analysis_df.columns:
@@ -865,32 +918,39 @@ def get_basic_summary(df):
         expense_total = gross_expense_total
 
         if "category" in analysis_df.columns and month_values is not None:
-            budget_df = analysis_df.assign(month=month_values)
+            budget_df = _expense_rows(analysis_df.assign(month=month_values))
             budget_df = budget_df[budget_df["month"].astype(str) != "NaT"]
             budget_scope = ["category", "month"]
         elif "category" in analysis_df.columns:
-            budget_df = analysis_df.copy()
+            budget_df = expense_df.copy()
             budget_scope = ["category"]
         else:
-            budget_df = analysis_df.copy()
+            budget_df = expense_df.copy()
             budget_scope = None
 
         if budget_scope:
-            unique_budgets = (
-                budget_df.groupby(budget_scope, observed=True)["budget_limit_php"]
-                .max()
+            scope_summary = (
+                budget_df.groupby(budget_scope, observed=True)
+                .agg(
+                    scope_spent=("amount_php", "sum"),
+                    scope_budget=("budget_limit_php", "max"),
+                )
                 .reset_index()
             )
-            budget_total = unique_budgets["budget_limit_php"].sum()
+            budgeted_scope = scope_summary[scope_summary["scope_budget"] > 0]
+            budget_total = budgeted_scope["scope_budget"].sum()
+            budgeted_spent = budgeted_scope["scope_spent"].sum()
         else:
-            budget_total = budget_df["budget_limit_php"].sum()
+            budgeted_mask = budget_df["budget_limit_php"] > 0
+            budget_total = budget_df.loc[budgeted_mask, "budget_limit_php"].sum()
+            budgeted_spent = budget_df.loc[budgeted_mask, "amount_php"].sum()
 
         summary["budget_summary"] = {
             "total_budget": float(budget_total),
-            "total_spent": float(expense_total),
+            "total_spent": float(budgeted_spent),
             "total_expenses": float(expense_total),
-            "remaining_budget": float(budget_total - expense_total),
-            "budget_usage_percent": float((expense_total / budget_total) * 100)
+            "remaining_budget": float(budget_total - budgeted_spent),
+            "budget_usage_percent": float((budgeted_spent / budget_total) * 100)
             if budget_total
             else 0.0,
             "budget_basis": "category_month" if budget_scope == ["category", "month"] else "category",
@@ -898,7 +958,7 @@ def get_basic_summary(df):
 
         if "category" in analysis_df.columns:
             category_expenses = (
-                analysis_df[analysis_df["amount_php"] > 0]
+                expense_df
                 .groupby("category", observed=True)["amount_php"]
                 .sum()
             )

@@ -1,10 +1,10 @@
-category,total_spent,total_budget,budget_variance,variance_percent,status
-Education,136063.0,104500.0,31563.0,30.2,Overspent
-Healthcare,22427.0,15000.0,7427.0,49.51,Overspent
-Housing,192000.0,192000.0,0.0,0.0,Within Budget
-Connectivity,31479.0,31500.0,-21.0,-0.07,Within Budget
-Transpo,1101.0,3500.0,-2399.0,-68.54,Within Budget
-Utilities,117245.0,123000.0,-5755.0,-4.68,Within Budget
-Lifestyle & Misc,72113.0,80500.0,-8387.0,-10.42,Within Budget
-Food,234430.0,288000.0,-53570.0,-18.6,Within Budget
-Transportation,11535.0,84000.0,-72465.0,-86.27,Within Budget
+category,total_spent,total_budget,remaining_budget,usage_percent
+Food,242253.0,288000.0,45747.0,84.1
+Housing,192000.0,192000.0,0.0,100.0
+Education,137929.0,104500.0,-33429.0,132.0
+Utilities,118195.0,123000.0,4805.0,96.1
+Lifestyle & Misc,73035.0,80500.0,7465.0,90.7
+Connectivity,31479.0,31500.0,21.0,99.9
+Healthcare,22427.0,15000.0,-7427.0,149.5
+Transportation,11607.0,84000.0,72393.0,13.8
+Transpo,1101.0,3500.0,2399.0,31.5

@@ -39,6 +39,17 @@ def _prepare_export_df(df):
     return export_df
 
 
+def _expense_rows(df):
+    mask = df["amount_php"] > 0
+    if "transaction_type" in df.columns:
+        transaction_type = df["transaction_type"].astype(str).str.strip().str.lower()
+        mask &= transaction_type == "expense"
+    elif "category" in df.columns:
+        category = df["category"].astype(str).str.strip().str.lower()
+        mask &= category != "income"
+    return df[mask].copy()
+
+
 def _build_category_summary(export_df):
     if export_df is None or "category" not in export_df.columns:
         return pd.DataFrame(
@@ -51,7 +62,7 @@ def _build_category_summary(export_df):
             ]
         )
 
-    expense_df = export_df[export_df["amount_php"] > 0]
+    expense_df = _expense_rows(export_df)
     grouped = (
         expense_df.groupby("category", observed=True)["amount_php"]
         .agg(total_expenses="sum", average_expense="mean", transaction_count="count")
@@ -73,7 +84,8 @@ def _build_monthly_summary(export_df):
                 "month",
                 "total_expenses",
                 "refund_total",
-                "net_amount",
+                "net_spending",
+                "cash_flow_total",
                 "average_transaction",
                 "transaction_count",
             ]
@@ -82,12 +94,12 @@ def _build_monthly_summary(export_df):
     monthly_df = export_df.dropna(subset=["month"])
     monthly = (
         monthly_df.groupby("month")["amount_php"]
-        .agg(net_amount="sum", average_transaction="mean", transaction_count="count")
+        .agg(cash_flow_total="sum", average_transaction="mean", transaction_count="count")
         .reset_index()
         .sort_values("month")
     )
     monthly_expenses = (
-        monthly_df[monthly_df["amount_php"] > 0].groupby("month")["amount_php"].sum()
+        _expense_rows(monthly_df).groupby("month")["amount_php"].sum()
     )
     monthly_refunds = (
         monthly_df[monthly_df["amount_php"] < 0]
@@ -97,10 +109,12 @@ def _build_monthly_summary(export_df):
     )
     monthly["total_expenses"] = monthly["month"].map(monthly_expenses).fillna(0)
     monthly["refund_total"] = monthly["month"].map(monthly_refunds).fillna(0)
-    monthly["net_amount"] = monthly["net_amount"].round(2)
+    monthly["net_spending"] = monthly["total_expenses"] - monthly["refund_total"]
+    monthly["cash_flow_total"] = monthly["cash_flow_total"].round(2)
     monthly["average_transaction"] = monthly["average_transaction"].round(2)
     monthly["total_expenses"] = monthly["total_expenses"].round(2)
     monthly["refund_total"] = monthly["refund_total"].round(2)
+    monthly["net_spending"] = monthly["net_spending"].round(2)
     return monthly
 
 
@@ -115,7 +129,7 @@ def _build_payment_summary(export_df):
             ]
         )
 
-    expense_df = export_df[export_df["amount_php"] > 0]
+    expense_df = _expense_rows(export_df)
     grouped = (
         expense_df.groupby("payment_method", observed=True)["amount_php"]
         .agg(total_expenses="sum", transaction_count="count")
@@ -142,19 +156,21 @@ def _build_budget_summary(export_df):
         )
 
     expense_totals = (
-        export_df[export_df["amount_php"] > 0]
+        _expense_rows(export_df)
         .groupby("category", observed=True)["amount_php"]
         .sum()
     )
     if "month" in export_df.columns:
+        budget_df = _expense_rows(export_df)
         budget_totals = (
-            export_df.groupby(["category", "month"], observed=True)["budget_limit_php"]
+            budget_df.groupby(["category", "month"], observed=True)["budget_limit_php"]
             .max()
             .groupby("category", observed=True)
             .sum()
         )
     else:
-        budget_totals = export_df.groupby("category", observed=True)[
+        budget_df = _expense_rows(export_df)
+        budget_totals = budget_df.groupby("category", observed=True)[
             "budget_limit_php"
         ].max()
 

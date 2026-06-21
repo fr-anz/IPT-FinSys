@@ -591,8 +591,15 @@ def _prepare_amount_data(df, required_columns):
 
 
 def _expense_only(df):
-    """Return rows that represent actual expenses, excluding refunds."""
-    return df[df["amount_php"] > 0].copy()
+    """Return rows that represent actual expenses, excluding income and refunds."""
+    mask = df["amount_php"] > 0
+    if "transaction_type" in df.columns:
+        transaction_type = df["transaction_type"].astype(str).str.strip().str.lower()
+        mask &= transaction_type == "expense"
+    elif "category" in df.columns:
+        category = df["category"].astype(str).str.strip().str.lower()
+        mask &= category != "income"
+    return df[mask].copy()
 
 
 def _ensure_month_column(df):
@@ -614,7 +621,7 @@ def _ensure_month_column(df):
 
 
 def _category_month_budgets(df):
-    """Return deduplicated category-month budgets plus positive expenses."""
+    """Return deduplicated category-month budgets plus expenses."""
     budget_df = _prepare_amount_data(df, ["category", "budget_limit_php"])
     if budget_df is None:
         return None
@@ -684,7 +691,7 @@ def _style_figure(fig, height=390):
 
 
 def create_bar_graph(df):
-    """Create a bar graph of positive expense totals by category."""
+    """Create a bar graph of expense totals by category."""
     chart_df = _prepare_amount_data(df, ["category"])
     if chart_df is None:
         return None
@@ -726,7 +733,7 @@ def create_bar_graph(df):
 
 
 def create_line_graph(df):
-    """Create a line graph of monthly positive expense trends."""
+    """Create a line graph of monthly expense trends."""
     chart_df = _prepare_amount_data(df, [])
     if chart_df is None:
         return None
@@ -763,7 +770,7 @@ def create_pie_chart(df):
     if chart_df is None:
         return None
 
-    chart_df = chart_df[chart_df["amount_php"] > 0]
+    chart_df = _expense_only(chart_df)
     if chart_df.empty:
         return None
 
@@ -938,7 +945,7 @@ def create_mini_monthly_line(df):
 
 
 def create_top_categories_bar(df, top_n=5):
-    """Create a compact horizontal bar of the top positive expense categories."""
+    """Create a compact horizontal bar of the top expense categories."""
     chart_df = _prepare_amount_data(df, ["category"])
     if chart_df is None:
         return None

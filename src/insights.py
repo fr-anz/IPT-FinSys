@@ -48,7 +48,7 @@ def generate_insights(df):
     summary = get_basic_summary(insight_df)
     total_expenses = summary.get("gross_expense_total", 0)
     refund_total = summary.get("refund_total", 0)
-    net_amount = summary.get("net_amount", 0)
+    net_spending = summary.get("net_spending", 0)
 
     budget_summary = summary.get("budget_summary", {})
     budget_usage = budget_summary.get("budget_usage_percent", 0)
@@ -56,11 +56,11 @@ def generate_insights(df):
     if budget_summary:
         if budget_usage > 100:
             insights.append(
-                f"Budget variance: Positive expenses exceed the monthly category budget by {_format_php(abs(remaining_budget))}. Budget utilization is {budget_usage:.1f}%, indicating that actual spending is materially above the planned allocation."
+                f"Budget variance: Expenses exceed the monthly category budget by {_format_php(abs(remaining_budget))}. Budget utilization is {budget_usage:.1f}%, indicating that actual spending is materially above the planned allocation."
             )
         else:
             insights.append(
-                f"Budget variance: Positive expenses used {budget_usage:.1f}% of the monthly category budget, leaving {_format_php(remaining_budget)} unspent. The selected period remains within the planned allocation."
+                f"Budget variance: Expenses used {budget_usage:.1f}% of the monthly category budget, leaving {_format_php(remaining_budget)} unspent. The selected period remains within the planned allocation."
             )
 
     budget_by_category = summary.get("budget_by_category", {})
@@ -86,13 +86,13 @@ def generate_insights(df):
         top_category, top_category_total = next(iter(category_totals.items()))
         category_share = (top_category_total / total_expenses) * 100
         insights.append(
-            f"Category concentration: {top_category} is the largest expense category at {_format_php(top_category_total)}, representing {category_share:.1f}% of total positive expenses. Monitoring this category will have the highest impact on overall spending control."
+            f"Category concentration: {top_category} is the largest expense category at {_format_php(top_category_total)}, representing {category_share:.1f}% of total expenses. Monitoring this category will have the highest impact on overall spending control."
         )
 
     if refund_total:
         refund_share = (refund_total / total_expenses) * 100 if total_expenses else 0
         insights.append(
-            f"Refund adjustment: Refunds reduced the net amount by {_format_php(refund_total)}, equivalent to {refund_share:.1f}% of positive expenses. Reporting both gross expenses and net amount prevents refunds from hiding the true spending level."
+            f"Refund adjustment: Refunds reduced net spending by {_format_php(refund_total)}, equivalent to {refund_share:.1f}% of expenses. Reporting both expenses before refunds and net spending keeps the refund effect visible."
         )
 
     monthly_trends = summary.get("monthly_trends", {})
@@ -115,8 +115,19 @@ def generate_insights(df):
             )
 
     if "necessity_type" in insight_df.columns:
+        expense_mask = insight_df["amount_php"] > 0
+        if "transaction_type" in insight_df.columns:
+            expense_mask &= (
+                insight_df["transaction_type"].astype(str).str.strip().str.lower()
+                == "expense"
+            )
+        elif "category" in insight_df.columns:
+            expense_mask &= (
+                insight_df["category"].astype(str).str.strip().str.lower()
+                != "income"
+            )
         necessity_totals = (
-            insight_df[insight_df["amount_php"] > 0]
+            insight_df[expense_mask]
             .groupby("necessity_type", observed=True)["amount_php"]
             .sum()
             .sort_values(ascending=False)
@@ -129,11 +140,11 @@ def generate_insights(df):
                 else 0
             )
             insights.append(
-                f"Priority mix: {top_necessity} transactions account for the largest priority-group expense at {_format_php(necessity_totals.iloc[0])}, or {priority_share:.1f}% of positive expenses. This helps distinguish essential spending pressure from discretionary behavior."
+                f"Priority mix: {top_necessity} transactions account for the largest priority-group expense at {_format_php(necessity_totals.iloc[0])}, or {priority_share:.1f}% of expenses. This helps distinguish essential spending pressure from discretionary behavior."
             )
 
     insights.append(
-        f"Analytical conclusion: The dashboard should be interpreted using three separate measures: positive expenses for spending behavior, refunds for adjustments, and net amount for final cash impact. Under this view, the current net amount is {_format_php(net_amount)} after refunds."
+        f"Analytical conclusion: The dashboard separates expenses, refunds, and net spending. Under this view, current net spending is {_format_php(net_spending)} after refunds."
     )
 
     return insights

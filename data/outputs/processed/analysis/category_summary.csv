@@ -1,10 +1,10 @@
-category,total_spent,transaction_count,average_transaction,pct_of_expenses
-Food,234430.0,183,1281.04,28.65
-Housing,192000.0,24,8000.0,23.46
-Education,136063.0,324,419.95,16.63
-Utilities,117245.0,70,1674.93,14.33
-Lifestyle & Misc,72113.0,66,1092.62,8.81
-Connectivity,31479.0,21,1499.0,3.85
-Healthcare,22427.0,15,1495.13,2.74
-Transportation,11535.0,130,88.73,1.41
-Transpo,1101.0,1,1101.0,0.13
+category,total_expenses,average_expense,transaction_count,pct_of_total
+Food,242253.0,1360.97,178,29.2
+Housing,192000.0,8000.0,24,23.1
+Education,137929.0,432.38,319,16.6
+Utilities,118195.0,1712.97,69,14.2
+Lifestyle & Misc,73035.0,1123.62,65,8.8
+Connectivity,31479.0,1499.0,21,3.8
+Healthcare,22427.0,1495.13,15,2.7
+Transportation,11607.0,89.98,129,1.4
+Transpo,1101.0,1101.0,1,0.1
